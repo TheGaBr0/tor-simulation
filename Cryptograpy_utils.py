@@ -1,0 +1,135 @@
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.backends import default_backend
+import secrets
+import hashlib
+
+# ----------------------------
+# Utility per chiavi RSA
+# ----------------------------
+def gen_rsa_keypair(key_size=2048):
+    """
+    Generate an RSA key pair and return both keys as PEM-encoded bytes.
+
+    Returns:
+        tuple[bytes, bytes]: (private_key_pem, public_key_pem)
+    """
+    # Generate RSA key pair
+    priv = rsa.generate_private_key(public_exponent=65537, key_size=key_size)
+    pub = priv.public_key()
+
+    # Serialize private key to PEM
+    priv_pem = priv.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption()  # No password
+    )
+
+    # Serialize public key to PEM
+    pub_pem = pub.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+
+    return priv_pem, pub_pem
+
+def rsa_encrypt(pubkey_bytes: bytes, message: bytes) -> bytes:
+    """
+    Encrypt bytes using a PEM-encoded public key.
+    """
+    pubkey = serialization.load_pem_public_key(pubkey_bytes)
+    return pubkey.encrypt(
+        message,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+
+def rsa_decrypt(privkey_bytes: bytes, ciphertext: bytes) -> bytes:
+    """
+    Decrypt bytes using a PEM-encoded private key.
+    """
+    privkey = serialization.load_pem_private_key(privkey_bytes, password=None)
+    return privkey.decrypt(
+        ciphertext,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+
+# ----------------------------
+# Utility per diffie hellman
+# ----------------------------
+
+DH_PRIME = 156874742607098651821626634042477471003674428306907731606877171083582008749286573492540571412903052668130173948362539242642440935298288088414972420471624731674095851642410264484465824786341360329232185144143602798461936161824250554262125726929613853159779007247066458429245413467002687309175140373752995883173
+DH_GENERATOR = 2
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.backends import default_backend
+import secrets
+
+
+
+def process_dh_handshake_request(onion_pubkey: str):
+    """
+    Genera la prima parte dell'handshake DH cifrata con la chiave pubblica del nodo.
+
+    :param onion_pubkey: Chiave pubblica del nodo OR1 in formato PEM
+    :return: tuple (x1, g^x1 % p, payload_cifrato)
+    """
+    
+    # Genera x1 casuale (tipicamente 256 bit o più)
+    x1 = secrets.randbits(256)
+    
+    # Calcola g^x1 mod p
+    g_x1 = pow(DH_GENERATOR, x1, DH_PRIME)
+    
+    # Converte g^x1 in byte per cifratura
+    g_x1_bytes = g_x1.to_bytes((g_x1.bit_length() + 7) // 8, 'big')
+    
+    payload_encrypted = rsa_encrypt(onion_pubkey, g_x1_bytes)
+    
+    return x1, g_x1, payload_encrypted
+
+
+def process_dh_handshake_response(g_x1_bytes: bytes):
+    """
+    Simula la risposta di OR1 alla prima cella CREATE.
+
+    :param or1_privkey: chiave privata RSA del nodo OR1
+    :param payload_encrypted: payload della cella CREATE contenente g^x1 cifrato
+    :return: tuple (y1, g^y1, H(K1), K1)
+    """
+    g_x1 = int.from_bytes(g_x1_bytes, 'big')
+
+    # Genera y1 casuale (tipicamente 256 bit o più)
+    y1 = secrets.randbits(256)
+
+    # Calcola g^y1 mod p
+    g_y1 = pow(DH_GENERATOR, y1, DH_PRIME)
+
+    # Calcola il segreto condiviso K1 = (g^x1)^y1 mod p
+    K1 = pow(g_x1, y1, DH_PRIME)
+
+    # Calcola H(K1) usando SHA-256
+    K1_bytes = K1.to_bytes((K1.bit_length() + 7) // 8, 'big')
+    H_K1 = hashlib.sha256(K1_bytes).digest()
+
+    return y1, g_y1, H_K1, K1
+
+def process_dh_handshake_final(g_y1_bytes: bytes, x1: int):
+    g_y1 = int.from_bytes(g_y1_bytes, 'big')
+    
+    # K1 = (g^y1)^x1 mod p = (g^x1)^y1 mod p
+    K1 = pow(g_y1, x1, DH_PRIME)
+    
+    K1_bytes = K1.to_bytes((K1.bit_length() + 7) // 8, 'big')
+    H_K1 = hashlib.sha256(K1_bytes).digest()
+    
+    return H_K1
