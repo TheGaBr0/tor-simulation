@@ -78,10 +78,12 @@ class Client:
         self.g_x1 = g_x1 # store g_x1 for final handshake check
         self.x1 = x1  # store x1 for final handshake check
 
+        f1 = pack_field(FieldType.DH_PARAMETER_BYTES, g_x1_bytes_encrypted)
+
         # Create a CREATE cell
         create_cell = CreateCell(
             circ_id=1,                     # circuit ID, choose an appropriate number
-            payload=g_x1_bytes_encrypted   # payload for the CREATE cell
+            payload=f1                      # payload for the CREATE cell
         )
         
         success = self.send_request("127.0.0.1", self.guard_chosen.port, create_cell.to_json().encode("utf-8"))
@@ -98,18 +100,11 @@ class Client:
 
         x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.relay_chosen.pub)
 
-        ip_bytes = bytes(map(int, self.relay_chosen.ip.split('.')))  # e.g., '192.168.1.5' -> b'\xc0\xa8\x01\x05'
-        port_bytes = self.relay_chosen.port.to_bytes(2, 'big')
+        f1 = pack_field(FieldType.DH_PARAMETER_BYTES, g_x1_bytes_encrypted)
+        f2 = pack_field(FieldType.PORT, self.relay_chosen.port)
+        f3 = pack_field(FieldType.IP, self.relay_chosen.ip)
 
-        # Construct combined payload
-        combined_payload = (
-            len(g_x1_bytes_encrypted).to_bytes(2, 'big') +  # length of encrypted data
-            g_x1_bytes_encrypted +                          # encrypted data
-            ip_bytes +                                        # 4 bytes for IP
-            port_bytes                                        # 2 bytes for port
-        )
-
-        payload_encrypted_K1, _ = aes_ctr_encrypt(combined_payload, self.K1, "forward")
+        payload_encrypted_K1, _ = aes_ctr_encrypt(f1+f2+f3, self.K1, "forward")
         
         self.g_x1 = g_x1 # store g_x1 for final handshake check
         self.x1 = x1  # store x1 for final handshake check
@@ -152,7 +147,7 @@ class Client:
             exit_port_bytes                                        # 2 bytes for port
         )
 
-        payload_encrypted_K2, _ = aes_ctr_encrypt(combined_payload, self.K2, "forward")
+        payload_encrypted_K2, _ = aes_ctr_encrypt(relay_combined_payload, self.K2, "forward")
 
         relay_header = RelayHeader(
             relay_command="RELAY_EXTEND",  
@@ -298,11 +293,11 @@ class Client:
             if isinstance(cell, CreatedCell) and cell.command == "CREATED": 
                 self.logger.info(f"Risposta CREATED ricevuta")
                 # decode base64 to get bytes
-                temp_payload = cell.payload
+                
+                unpacked_payload = unpack_fields_dict(cell.payload)
 
-                length = int.from_bytes(temp_payload[:2], 'big')
-                g_y1_bytes = temp_payload[2:2+length]
-                H_K1_toCheck = temp_payload[2+length:]
+                g_y1_bytes = unpacked_payload[FieldType.DH_PARAMETER_BYTES]
+                H_K1_toCheck = unpacked_payload[FieldType.DH_HASH_K_BYTES]
 
                 g_y1 = int.from_bytes(g_y1_bytes, 'big')
 
@@ -315,12 +310,14 @@ class Client:
             if isinstance(cell,RelayCell) and cell.relay_header.relay_command=="RELAY_EXTENDED":
                 self.logger.info(f"Risposta RELAY_EXTENDED ricevuta")
                 # decode base64 to get bytes
-      
-                temp_payload=aes_ctr_decrypt(cell.relay_payload, self.K1, "backward")
+                
+                decrypted_payload =aes_ctr_decrypt(cell.relay_payload, self.K1, "backward")
 
-                length = int.from_bytes(temp_payload[:2], 'big')
-                g_y1_bytes = temp_payload[2:2+length]
-                H_K2_toCheck = temp_payload[2+length:]
+                unpacked_payload = unpack_fields_dict(decrypted_payload)
+
+
+                g_y1_bytes = unpacked_payload[FieldType.DH_PARAMETER_BYTES]
+                H_K2_toCheck = unpacked_payload[FieldType.DH_HASH_K_BYTES]
 
                 g_y1 = int.from_bytes(g_y1_bytes, 'big')
 

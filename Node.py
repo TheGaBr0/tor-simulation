@@ -168,40 +168,49 @@ class Node:
             # --- Handle CREATE ---
             if isinstance(cell, CreateCell) and cell.command == "CREATE":
                 self.logger.info("Richiesta CREATE ricevuta")
-                g_x1_bytes_decrypted = rsa_decrypt(self._priv, cell.payload)
+
+                
+                unpacked_payload = unpack_fields_dict(cell.payload)
+                
+                g_x1_bytes_encrypted = unpacked_payload[FieldType.DH_PARAMETER_BYTES] #il primo elemento di un payload è sempre DH_PARAMETER_BYTES o TOR_CELL
+
+                g_x1_bytes_decrypted = rsa_decrypt(self._priv, g_x1_bytes_encrypted) 
                 y1, g_y1, H_K1, K1 = process_dh_handshake_response(g_x1_bytes_decrypted)
                 
                 # Store the session key for this circuit
                 self.circuit_keys[cell.circ_id] = K1
-                self.K = K1  # Keep for backward compatibility
                 
-                g_y1_bytes = g_y1.to_bytes((g_y1.bit_length() + 7) // 8, 'big')
-                combined_payload = len(g_y1_bytes).to_bytes(2, 'big') + g_y1_bytes + H_K1
                 
+                f1 = pack_field(FieldType.DH_PARAMETER_BYTES, g_y1.to_bytes((g_y1.bit_length() + 7) // 8, 'big'))
+                f2 = pack_field(FieldType.DH_HASH_K_BYTES, H_K1)
+            
+
                 created_cell = CreatedCell(
                     circ_id=cell.circ_id,
-                    payload=combined_payload
+                    payload=f1+f2
                 )
                 return created_cell.to_json().encode("utf-8")
                 
             elif isinstance(cell, CreatedCell) and cell.command == "CREATED":
                 self.logger.info("Risposta CREATED ricevuta")
-                temp_payload = cell.payload
-                length = int.from_bytes(temp_payload[:2], 'big')
-                g_y1_bytes = temp_payload[2:2+length]
-                H_K_TO_BE_FORWARDED = temp_payload[2+length:]
+
+                unpacked_payload = unpack_fields_dict(cell.payload)
+
+                g_y1_bytes = unpacked_payload[FieldType.DH_PARAMETER_BYTES]
+                H_K_TO_BE_FORWARDED=unpacked_payload[FieldType.DH_HASH_K_BYTES]
+
                 
-                g_y1 = int.from_bytes(g_y1_bytes, 'big')
-                payload_to_be_forwarded = len(g_y1_bytes).to_bytes(2, 'big') + g_y1_bytes + H_K_TO_BE_FORWARDED
-                
-                # Use the stored session key for this circuit
-                K = self.circuit_keys.get(cell.circ_id, self.K)
-                payload_to_be_forwarded_encrypted, _ = aes_ctr_encrypt(payload_to_be_forwarded, K, "backward")
+                f1 = pack_field(FieldType.DH_PARAMETER_BYTES, g_y1_bytes)
+                f2 = pack_field(FieldType.DH_HASH_K_BYTES, H_K_TO_BE_FORWARDED)
+
+                # Use the stored session key for this circuit   
+                K = self.circuit_keys.get(cell.circ_id, self.circuit_keys[cell.circ_id])
+                payload_to_be_forwarded_encrypted, _ = aes_ctr_encrypt(f1+f2, K, "backward")
                 
                 relay_header = RelayHeader(
                     relay_command="RELAY_EXTENDED",  # RELAY_EXTENDED
                     stream_id=0,
-                    digest=calculate_digest(self.K), #dummy value, client non deve controllarlo credo
+                    digest=calculate_digest(self.circuit_keys[cell.circ_id]), #dummy value, client non deve controllarlo credo
                     length=len(payload_to_be_forwarded_encrypted)
                 )
                 
@@ -218,26 +227,23 @@ class Node:
                 self.logger.info("Richiesta RELAY_EXTEND ricevuta")
                 
                 # Use the stored session key for this circuit
-                K = self.circuit_keys.get(cell.circ_id, self.K)
+                K = self.circuit_keys.get(cell.circ_id, self.circuit_keys[cell.circ_id])
                 payload_decrypted_K = aes_ctr_decrypt(cell.relay_payload, K, "forward")
-                combined_payload = payload_decrypted_K
                 
-                # Extract length of encrypted g_x1
-                length = int.from_bytes(combined_payload[:2], 'big')
-                # Extract encrypted g_x1
-                g_x1_bytes_encrypted = combined_payload[2:2+length]
-                # Extract IP (4 bytes) – it's right before the last 2 bytes (port)
-                ip_bytes = combined_payload[2+length:2+length+4]
-                ip_str = '.'.join(map(str, ip_bytes))
-                # Extract port (2 bytes) – last 2 bytes
-                port_bytes = combined_payload[-2:]
-                port = int.from_bytes(port_bytes, 'big')
+                unpacked_payload = unpack_fields_dict(payload_decrypted_K)
+
+                g_x1_bytes_encrypted = unpacked_payload[FieldType.DH_PARAMETER_BYTES]
+                port = unpacked_payload[FieldType.PORT]
+                ip = unpacked_payload[FieldType.IP]
+               
                 
                 if cell.relay_header.digest == calculate_digest(K):
+
+                    f1 = pack_field(FieldType.DH_PARAMETER_BYTES, g_x1_bytes_encrypted)
                     # Forward CREATE to the next node
                     create_cell = CreateCell(
-                        circ_id=2,  # circuit ID, choose an appropriate number
-                        payload=g_x1_bytes_encrypted  # payload for the CREATE cell
+                        circ_id=1,  # circuit ID, choose an appropriate number
+                        payload=f1  # payload for the CREATE cell
                     )
                     
                     # Forward and wait for response

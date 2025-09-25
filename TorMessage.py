@@ -111,10 +111,11 @@ class CreatedCell(TorCell):
         return json.dumps(self.to_dict())
     
 class FieldType(IntEnum):
-    DH_BYTES = 1
-    TOR_CELL = 2
-    IP = 3
-    PORT = 4
+    DH_PARAMETER_BYTES = 1
+    DH_HASH_K_BYTES = 2
+    TOR_CELL = 3
+    IP = 4
+    PORT = 5
 
 def pack_field(ftype: FieldType, value) -> bytes:
     if ftype == FieldType.TOR_CELL:
@@ -132,7 +133,12 @@ def pack_field(ftype: FieldType, value) -> bytes:
             raise TypeError("Expected str for IP field")
         data = value.encode("utf-8")
 
-    elif ftype == FieldType.DH_BYTES:
+    elif ftype == FieldType.DH_PARAMETER_BYTES:
+        if not isinstance(value, (bytes, bytearray)):
+            raise TypeError("Expected bytes for DH_BYTES field")
+        data = bytes(value)
+        
+    elif ftype == FieldType.DH_HASH_K_BYTES:
         if not isinstance(value, (bytes, bytearray)):
             raise TypeError("Expected bytes for DH_BYTES field")
         data = bytes(value)
@@ -164,7 +170,7 @@ def unpack_fields(payload: bytes):
             obj = data.decode("utf-8")
             fields.append((ftype, obj))
 
-        elif ftype == FieldType.DH_BYTES:
+        elif ftype == FieldType.DH_PARAMETER_BYTES:
             fields.append((ftype, data))
 
         else:
@@ -173,3 +179,10 @@ def unpack_fields(payload: bytes):
         i += 5 + length
 
     return fields
+
+def unpack_fields_dict(payload: bytes) -> dict[FieldType, object]:
+    """
+    Same as unpack_fields, but returns a dict keyed by FieldType.
+    Assumes each FieldType appears at most once.
+    """
+    return {ft: val for ft, val in unpack_fields(payload)}
