@@ -1,4 +1,4 @@
-from Cryptograpy_utils import process_dh_handshake_request,process_dh_handshake_final
+from Cryptograpy_utils import *
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.backends import default_backend
 from Directory_Server import DirectoryServer
@@ -8,7 +8,7 @@ import random
 import logging
 import socket
 from typing import Optional, Dict
-from TorMessage import TorMessage
+from TorMessage import *
 import json
 import base64
 import pickle
@@ -30,6 +30,10 @@ class Client:
         self.guard_chosen = None
         self.relay_chosen = None
         self.exit_chosen = None
+
+        self.K1 = None
+        self.K2 = None
+        self.K3 = None
 
         self.nodes = []
 
@@ -62,28 +66,138 @@ class Client:
         self.relay_chosen = self.choose_relay()
         self.exit_chosen = self.choose_exit()
 
-        self.logger.info(f"Client {self.id}: percorso scelto: \n - {self.guard_chosen}\n - {self.relay_chosen}\n - {self.exit_chosen}")
+        self.logger.info(f"Percorso scelto: \n - {self.guard_chosen}\n - {self.relay_chosen}\n - {self.exit_chosen}")
 
     def enstablish_circuit(self):
+        #====================================
         #Creazione del circuito con il guard
-        
+        #====================================
 
-        x1, g_x1, payload_encrypted = process_dh_handshake_request(self.guard_chosen.pub)
+        x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.guard_chosen.pub)
         
-        self.g_x1 = g_x1
+        self.g_x1 = g_x1 # store g_x1 for final handshake check
         self.x1 = x1  # store x1 for final handshake check
 
-
-
-        payload = TorMessage("C1", "CREATE", payload_encrypted)
+        # Create a CREATE cell
+        create_cell = CreateCell(
+            circ_id=1,                     # circuit ID, choose an appropriate number
+            payload=g_x1_bytes_encrypted   # payload for the CREATE cell
+        )
         
-
-        success = self.send_request("127.0.0.1", self.guard_chosen.port, json.dumps(payload.to_dict()).encode("utf-8"))
+        success = self.send_request("127.0.0.1", self.guard_chosen.port, create_cell.to_json().encode("utf-8"))
 
         if success:
             self.logger.info("Handshake con guard completato")
         else:
             self.logger.info("Handshake con guard fallito")
+            return
+        
+        #====================================
+        #Creazione del circuito con il relay
+        #====================================
+
+        x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.relay_chosen.pub)
+
+        ip_bytes = bytes(map(int, self.relay_chosen.ip.split('.')))  # e.g., '192.168.1.5' -> b'\xc0\xa8\x01\x05'
+        port_bytes = self.relay_chosen.port.to_bytes(2, 'big')
+
+        # Construct combined payload
+        combined_payload = (
+            len(g_x1_bytes_encrypted).to_bytes(2, 'big') +  # length of encrypted data
+            g_x1_bytes_encrypted +                          # encrypted data
+            ip_bytes +                                        # 4 bytes for IP
+            port_bytes                                        # 2 bytes for port
+        )
+
+        payload_encrypted_K1, _ = aes_ctr_encrypt(combined_payload, self.K1, "forward")
+        
+        self.g_x1 = g_x1 # store g_x1 for final handshake check
+        self.x1 = x1  # store x1 for final handshake check
+
+        relay_header = RelayHeader(
+            relay_command="RELAY_EXTEND",  
+            stream_id=0,           # 0 for circuit-level commands
+            digest=calculate_digest(self.K1), 
+            length=len(payload_encrypted_K1)
+        )
+
+        relay_cell = RelayCell(
+            circ_id=1,              # Use your circuit ID
+            relay_header=relay_header,
+            relay_payload=payload_encrypted_K1
+        )
+
+        success = self.send_request("127.0.0.1", self.guard_chosen.port, relay_cell.to_json().encode("utf-8"))
+
+        if success:
+            self.logger.info("Handshake con relay completato")
+        else:
+            self.logger.info("Handshake con relay fallito")
+            return
+        
+        #====================================
+        #Creazione del circuito con l'exit
+        #====================================
+
+        x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.relay_chosen.pub)
+
+        exit_ip_bytes = bytes(map(int, self.exit_chosen.ip.split('.')))  # e.g., '192.168.1.5' -> b'\xc0\xa8\x01\x05'
+        exit_port_bytes = self.exit_chosen.port.to_bytes(2, 'big')
+
+        # Construct combined payload
+        relay_combined_payload = (
+            len(g_x1_bytes_encrypted).to_bytes(2, 'big') +  # length of encrypted data
+            g_x1_bytes_encrypted +                          # encrypted data
+            exit_ip_bytes +                                        # 4 bytes for IP
+            exit_port_bytes                                        # 2 bytes for port
+        )
+
+        payload_encrypted_K2, _ = aes_ctr_encrypt(combined_payload, self.K2, "forward")
+
+        relay_header = RelayHeader(
+            relay_command="RELAY_EXTEND",  
+            stream_id=0,           # 0 for circuit-level commands
+            digest=calculate_digest(self.K2), 
+            length=len(payload_encrypted_K2)
+        )
+
+        inner_relay_cell = RelayCell(
+            circ_id=1,              # Use your circuit ID
+            relay_header=relay_header,
+            relay_payload=payload_encrypted_K2
+        )
+
+        relay_ip_bytes = bytes(map(int, self.relay_chosen.ip.split('.')))  # e.g., '192.168.1.5' -> b'\xc0\xa8\x01\x05'
+        relay_port_bytes = self.relay_chosen.port.to_bytes(2, 'big')
+
+        guard_combined_payload = (
+            len(inner_relay_cell).to_bytes(2, 'big') +  # length of encrypted data
+            inner_relay_cell.to_json()+
+            relay_ip_bytes +                                        # 4 bytes for IP
+            relay_port_bytes                                        # 2 bytes for port
+        )
+
+        payload_encrypted_K1, _ = aes_ctr_encrypt(guard_combined_payload, self.K1, "forward")
+
+        relay_header = RelayHeader(
+            relay_command="RELAY_EXTEND",  
+            stream_id=0,           # 0 for circuit-level commands
+            digest=calculate_digest(self.K1), 
+            length=len(guard_combined_payload)
+        )
+
+        outer_relay_cell = RelayCell(
+            circ_id=1,              # Use your circuit ID
+            relay_header=relay_header,
+            relay_payload=payload_encrypted_K1
+        )
+
+        success = self.send_request("127.0.0.1", self.guard_chosen.port, outer_relay_cell.to_json().encode("utf-8"))
+
+        if success:
+            self.logger.info("Handshake con relay completato")
+        else:
+            self.logger.info("Handshake con relay fallito")
             return
 
     def connect_to_tor_network(self):
@@ -173,7 +287,7 @@ class Client:
         try:
             try:
                 payload_str = data.decode("utf-8")
-                payload = json.loads(payload_str)
+                cell = TorCell.from_json(payload_str)
             except UnicodeDecodeError:
                 # RETRIEVED
                 self.logger.info(f"Risposta RETRIEVED ricevuta")
@@ -181,22 +295,41 @@ class Client:
                 self.nodes = packet.get("nodes", [])
                 return True
 
-            match payload.get("cmd"):
-                case "CREATED":
-                    self.logger.info(f"Risposta CREATED ricevuta")
-                    # decode base64 to get bytes
-                    temp_payload = base64.b64decode(payload["payload"])
+            if isinstance(cell, CreatedCell) and cell.command == "CREATED": 
+                self.logger.info(f"Risposta CREATED ricevuta")
+                # decode base64 to get bytes
+                temp_payload = cell.payload
 
-                    length = int.from_bytes(temp_payload[:2], 'big')
-                    g_y1_bytes = temp_payload[2:2+length]
-                    H_K1_toCheck = temp_payload[2+length:]
+                length = int.from_bytes(temp_payload[:2], 'big')
+                g_y1_bytes = temp_payload[2:2+length]
+                H_K1_toCheck = temp_payload[2+length:]
 
-                    H_K1 = process_dh_handshake_final(g_y1_bytes, self.x1)
-                    print(f"Confronto chiavi:\n{H_K1.hex()}\n{H_K1_toCheck.hex()}\nUguaglianza: {H_K1_toCheck == H_K1}")
-                    return H_K1_toCheck == H_K1
+                g_y1 = int.from_bytes(g_y1_bytes, 'big')
 
-                case "RELAY_EXTENDED":
-                    pass
+                self.K1 = pow(g_y1, self.x1, DH_PRIME)
+
+                H_K1 = process_dh_handshake_final(g_y1_bytes, self.x1)
+                print(f"Confronto chiavi:\n{H_K1.hex()}\n{H_K1_toCheck.hex()}\nUguaglianza: {H_K1_toCheck == H_K1}")
+                return H_K1_toCheck == H_K1
+            
+            if isinstance(cell,RelayCell) and cell.relay_header.relay_command=="RELAY_EXTENDED":
+                self.logger.info(f"Risposta RELAY_EXTENDED ricevuta")
+                # decode base64 to get bytes
+      
+                temp_payload=aes_ctr_decrypt(cell.relay_payload, self.K1, "backward")
+
+                length = int.from_bytes(temp_payload[:2], 'big')
+                g_y1_bytes = temp_payload[2:2+length]
+                H_K2_toCheck = temp_payload[2+length:]
+
+                g_y1 = int.from_bytes(g_y1_bytes, 'big')
+
+                self.K2 = pow(g_y1, self.x1, DH_PRIME)
+
+                H_K2 = process_dh_handshake_final(g_y1_bytes, self.x1)
+                print(f"Confronto chiavi:\n{H_K2.hex()}\n{H_K2_toCheck.hex()}\nUguaglianza: {H_K2_toCheck == H_K2}")
+                
+                return H_K2_toCheck == H_K2
 
             return False
 

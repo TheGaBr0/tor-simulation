@@ -1,5 +1,6 @@
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 import secrets
 import hashlib
@@ -34,6 +35,7 @@ def gen_rsa_keypair(key_size=2048):
     return priv_pem, pub_pem
 
 def rsa_encrypt(pubkey_bytes: bytes, message: bytes) -> bytes:
+
     """
     Encrypt bytes using a PEM-encoded public key.
     """
@@ -65,6 +67,15 @@ def rsa_decrypt(privkey_bytes: bytes, ciphertext: bytes) -> bytes:
 # Utility per diffie hellman
 # ----------------------------
 
+def calculate_digest(K: int):
+    K_bytes = K.to_bytes((K.bit_length() + 7) // 8, 'big')
+    return hashlib.sha256(K_bytes).digest()
+
+
+# ----------------------------
+# Utility per diffie hellman
+# ----------------------------
+
 DH_PRIME = 156874742607098651821626634042477471003674428306907731606877171083582008749286573492540571412903052668130173948362539242642440935298288088414972420471624731674095851642410264484465824786341360329232185144143602798461936161824250554262125726929613853159779007247066458429245413467002687309175140373752995883173
 DH_GENERATOR = 2
 
@@ -76,14 +87,13 @@ import secrets
 
 
 
-def process_dh_handshake_request(onion_pubkey: str):
+def process_dh_handshake_request(onion_pubkey: bytes):
     """
     Genera la prima parte dell'handshake DH cifrata con la chiave pubblica del nodo.
 
     :param onion_pubkey: Chiave pubblica del nodo OR1 in formato PEM
     :return: tuple (x1, g^x1 % p, payload_cifrato)
     """
-    
     # Genera x1 casuale (tipicamente 256 bit o più)
     x1 = secrets.randbits(256)
     
@@ -93,9 +103,9 @@ def process_dh_handshake_request(onion_pubkey: str):
     # Converte g^x1 in byte per cifratura
     g_x1_bytes = g_x1.to_bytes((g_x1.bit_length() + 7) // 8, 'big')
     
-    payload_encrypted = rsa_encrypt(onion_pubkey, g_x1_bytes)
+    g_x1_bytes_encrypted = rsa_encrypt(onion_pubkey, g_x1_bytes)
     
-    return x1, g_x1, payload_encrypted
+    return x1, g_x1, g_x1_bytes_encrypted
 
 
 def process_dh_handshake_response(g_x1_bytes: bytes):
@@ -117,9 +127,8 @@ def process_dh_handshake_response(g_x1_bytes: bytes):
     # Calcola il segreto condiviso K1 = (g^x1)^y1 mod p
     K1 = pow(g_x1, y1, DH_PRIME)
 
-    # Calcola H(K1) usando SHA-256
-    K1_bytes = K1.to_bytes((K1.bit_length() + 7) // 8, 'big')
-    H_K1 = hashlib.sha256(K1_bytes).digest()
+    
+    H_K1 = calculate_digest(K1)
 
     return y1, g_y1, H_K1, K1
 
@@ -129,7 +138,54 @@ def process_dh_handshake_final(g_y1_bytes: bytes, x1: int):
     # K1 = (g^y1)^x1 mod p = (g^x1)^y1 mod p
     K1 = pow(g_y1, x1, DH_PRIME)
     
-    K1_bytes = K1.to_bytes((K1.bit_length() + 7) // 8, 'big')
-    H_K1 = hashlib.sha256(K1_bytes).digest()
+    H_K1 = calculate_digest(K1)
     
     return H_K1
+
+# ----------------------------
+# Utility per aes
+# ----------------------------
+
+def aes_ctr_encrypt(plaintext: bytes, key_material: int, direction: str) -> tuple[bytes, bytes]:
+    """
+    Encrypts plaintext using AES-128 in CTR mode, deriving nonce from session key.
+    
+    :param plaintext: Data to encrypt
+    :param key_material: Integer key material (e.g., K1 from DH)
+    :param direction: "forward" or "backward" to differentiate nonce
+    :return: (ciphertext, nonce)
+    """
+    # Convert key material to bytes and derive a 128-bit key
+    key_bytes = key_material.to_bytes((key_material.bit_length() + 7) // 8, 'big')
+    key_128 = hashlib.sha256(key_bytes).digest()[:16]  # 16 bytes = 128 bits
+
+    # Derive a deterministic nonce from key material + direction
+    nonce = hashlib.sha256(key_bytes + direction.encode()).digest()[:16]
+
+    # Encrypt with AES-CTR using derived nonce
+    cipher = Cipher(algorithms.AES(key_128), modes.CTR(nonce))
+    encryptor = cipher.encryptor()
+    ciphertext = encryptor.update(plaintext) + encryptor.finalize()
+
+    return ciphertext, nonce
+
+
+def aes_ctr_decrypt(ciphertext: bytes, key_material: int, direction: str) -> bytes:
+    """
+    Decrypts AES-128 CTR ciphertext using the same key material and nonce.
+    
+    :param ciphertext: Data to decrypt
+    :param key_material: Integer key material (e.g., K1 from DH)
+    :param nonce: Nonce used during encryption
+    :return: plaintext
+    """
+    key_bytes = key_material.to_bytes((key_material.bit_length() + 7) // 8, 'big')
+    key_128 = hashlib.sha256(key_bytes).digest()[:16]  # 128-bit key
+
+    nonce = hashlib.sha256(key_bytes + direction.encode()).digest()[:16]
+
+    cipher = Cipher(algorithms.AES(key_128), modes.CTR(nonce))
+    decryptor = cipher.decryptor()
+    plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+    
+    return plaintext

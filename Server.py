@@ -3,7 +3,7 @@ import socket
 import logging
 from typing import Optional, Dict
 import json
-from TorMessage import TorMessage
+from TorMessage import *
 
 class Server:
     def __init__(self, server_id: str, ip: str, port: int):
