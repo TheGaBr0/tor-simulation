@@ -68,7 +68,7 @@ def rsa_decrypt(privkey_bytes: bytes, ciphertext: bytes) -> bytes:
 # ----------------------------
 
 def calculate_digest(K: int):
-    K_bytes = K.to_bytes((K.bit_length() + 7) // 8, 'big')
+    K_bytes = data_to_bytes(K)
     return hashlib.sha256(K_bytes).digest()
 
 
@@ -101,7 +101,7 @@ def process_dh_handshake_request(onion_pubkey: bytes):
     g_x1 = pow(DH_GENERATOR, x1, DH_PRIME)
     
     # Converte g^x1 in byte per cifratura
-    g_x1_bytes = g_x1.to_bytes((g_x1.bit_length() + 7) // 8, 'big')
+    g_x1_bytes =data_to_bytes(g_x1)
     
     g_x1_bytes_encrypted = rsa_encrypt(onion_pubkey, g_x1_bytes)
     
@@ -156,7 +156,7 @@ def aes_ctr_encrypt(plaintext: bytes, key_material: int, direction: str) -> tupl
     :return: (ciphertext, nonce)
     """
     # Convert key material to bytes and derive a 128-bit key
-    key_bytes = key_material.to_bytes((key_material.bit_length() + 7) // 8, 'big')
+    key_bytes = data_to_bytes(key_material)
     key_128 = hashlib.sha256(key_bytes).digest()[:16]  # 16 bytes = 128 bits
 
     # Derive a deterministic nonce from key material + direction
@@ -179,7 +179,7 @@ def aes_ctr_decrypt(ciphertext: bytes, key_material: int, direction: str) -> byt
     :param nonce: Nonce used during encryption
     :return: plaintext
     """
-    key_bytes = key_material.to_bytes((key_material.bit_length() + 7) // 8, 'big')
+    key_bytes = data_to_bytes(key_material)
     key_128 = hashlib.sha256(key_bytes).digest()[:16]  # 128-bit key
 
     nonce = hashlib.sha256(key_bytes + direction.encode()).digest()[:16]
@@ -189,3 +189,10 @@ def aes_ctr_decrypt(ciphertext: bytes, key_material: int, direction: str) -> byt
     plaintext = decryptor.update(ciphertext) + decryptor.finalize()
     
     return plaintext
+
+# ----------------------------
+# Utility per bytes
+# ----------------------------
+
+def data_to_bytes(value: object) -> bytes:
+    return value.to_bytes((value.bit_length() + 7) // 8, 'big')

@@ -78,15 +78,15 @@ class Client:
         self.g_x1 = g_x1 # store g_x1 for final handshake check
         self.x1 = x1  # store x1 for final handshake check
 
-        f1 = pack_field(FieldType.DH_PARAMETER_BYTES, g_x1_bytes_encrypted)
+        print(g_x1_bytes_encrypted)
 
-        # Create a CREATE cell
-        create_cell = CreateCell(
-            circ_id=1,                     # circuit ID, choose an appropriate number
-            payload=f1                      # payload for the CREATE cell
+        create_cell = TorCell(
+            circid=1,
+            cmd=TorCommands.CREATE,
+            data=encode_payload([g_x1_bytes_encrypted])  # Il padding a 509 bytes è automatico
         )
-        
-        success = self.send_request("127.0.0.1", self.guard_chosen.port, create_cell.to_json().encode("utf-8"))
+
+        success = self.send_request("127.0.0.1", self.guard_chosen.port, create_cell.to_bytes())
 
         if success:
             self.logger.info("Handshake con guard completato")
@@ -100,29 +100,31 @@ class Client:
 
         x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.relay_chosen.pub)
 
-        f1 = pack_field(FieldType.DH_PARAMETER_BYTES, g_x1_bytes_encrypted)
-        f2 = pack_field(FieldType.PORT, self.relay_chosen.port)
-        f3 = pack_field(FieldType.IP, self.relay_chosen.ip)
+        relay_port_in_bytes = data_to_bytes(self.relay_chosen.port)
+        relay_ip_in_bytes = data_to_bytes(self.relay_chosen.ip)
 
-        payload_encrypted_K1, _ = aes_ctr_encrypt(f1+f2+f3, self.K1, "forward")
-        
+        payload = encode_payload([g_x1_bytes_encrypted, relay_port_in_bytes, relay_ip_in_bytes])
+
+        is_relay_encrypted, _ = aes_ctr_encrypt(data_to_bytes(True), self.K1, "forward")
+        relay__encrypted, _ = aes_ctr_encrypt(data_to_bytes(RelayCommands.EXTEND), self.K1, "forward")
+        streamid_encrypted, _ = aes_ctr_encrypt(data_to_bytes(0), self.K1, "forward")
+        digest_encrypted, _ = aes_ctr_encrypt(data_to_bytes(calculate_digest(self.K1)), self.K1, "forward")
+        payload_encrypted, _, _ = aes_ctr_encrypt(payload, self.K1, "forward")
+
         self.g_x1 = g_x1 # store g_x1 for final handshake check
         self.x1 = x1  # store x1 for final handshake check
 
-        relay_header = RelayHeader(
-            relay_command="RELAY_EXTEND",  
-            stream_id=0,           # 0 for circuit-level commands
-            digest=calculate_digest(self.K1), 
-            length=len(payload_encrypted_K1)
+        relay_cell = TorCell(
+            circid=456, 
+            cmd=TorCommands.RELAY, 
+            is_relay=is_relay_encrypted,
+            relay=relay__encrypted,  
+            streamid=streamid_encrypted,
+            digest=digest_encrypted,
+            data=payload_encrypted_K1
         )
 
-        relay_cell = RelayCell(
-            circ_id=1,              # Use your circuit ID
-            relay_header=relay_header,
-            relay_payload=payload_encrypted_K1
-        )
-
-        success = self.send_request("127.0.0.1", self.guard_chosen.port, relay_cell.to_json().encode("utf-8"))
+        success = self.send_request("127.0.0.1", self.guard_chosen.port, relay_cell.to_bytes())
 
         if success:
             self.logger.info("Handshake con relay completato")
@@ -281,43 +283,45 @@ class Client:
 
         try:
             try:
-                payload_str = data.decode("utf-8")
-                cell = TorCell.from_json(payload_str)
-            except UnicodeDecodeError:
+                cell = TorCell.from_bytes(data)
+            except ValueError:
                 # RETRIEVED
                 self.logger.info(f"Risposta RETRIEVED ricevuta")
                 packet = pickle.loads(data)
                 self.nodes = packet.get("nodes", [])
                 return True
 
-            if isinstance(cell, CreatedCell) and cell.command == "CREATED": 
+            if  cell.cmd == TorCommands.CREATED: 
                 self.logger.info(f"Risposta CREATED ricevuta")
-                # decode base64 to get bytes
-                
-                unpacked_payload = unpack_fields_dict(cell.payload)
+                # decode base64 to get bytes    
 
-                g_y1_bytes = unpacked_payload[FieldType.DH_PARAMETER_BYTES]
-                H_K1_toCheck = unpacked_payload[FieldType.DH_HASH_K_BYTES]
+                decoded_payload = decode_payload(cell.data)
 
-                g_y1 = int.from_bytes(g_y1_bytes, 'big')
+                g_y1_to_bytes = decoded_payload[0]
+                H_K1_toCheck = decoded_payload[1]
+
+                g_y1 = int.from_bytes(g_y1_to_bytes, 'big')
 
                 self.K1 = pow(g_y1, self.x1, DH_PRIME)
 
-                H_K1 = process_dh_handshake_final(g_y1_bytes, self.x1)
+                H_K1 = process_dh_handshake_final(g_y1_to_bytes, self.x1)
                 print(f"Confronto chiavi:\n{H_K1.hex()}\n{H_K1_toCheck.hex()}\nUguaglianza: {H_K1_toCheck == H_K1}")
                 return H_K1_toCheck == H_K1
             
-            if isinstance(cell,RelayCell) and cell.relay_header.relay_command=="RELAY_EXTENDED":
+            if cell.is_relay and cell.relay == RelayCommands.EXTENDED:
                 self.logger.info(f"Risposta RELAY_EXTENDED ricevuta")
                 # decode base64 to get bytes
                 
-                decrypted_payload =aes_ctr_decrypt(cell.relay_payload, self.K1, "backward")
+                is_relay_decrypted, = aes_ctr_decrypt(cell.is_relay, self.K1, "backward")
+                relay__decrypted = aes_ctr_decrypt(cell.relay_command, self.K1, "backward")
+                streamid_decrypted = aes_ctr_decrypt(cell.streamid, self.K1, "backward")
+                digest_decrypted = aes_ctr_decrypt(cell.digest, self.K1, "backward")
+                payload_decrypted = aes_ctr_decrypt(cell.data, self.K1, "backward")
+                
+                decoded_payload = decode_payload(payload_decrypted)
 
-                unpacked_payload = unpack_fields_dict(decrypted_payload)
-
-
-                g_y1_bytes = unpacked_payload[FieldType.DH_PARAMETER_BYTES]
-                H_K2_toCheck = unpacked_payload[FieldType.DH_HASH_K_BYTES]
+                g_y1_bytes = decoded_payload[0]
+                H_K2_toCheck = decoded_payload[1]
 
                 g_y1 = int.from_bytes(g_y1_bytes, 'big')
 

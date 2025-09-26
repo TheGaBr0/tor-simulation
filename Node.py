@@ -162,92 +162,90 @@ class Node:
         """Processa un messaggio ricevuto"""
         try:
             # Decode JSON to get a TorCell object
-            payload_str = data.decode("utf-8")
-            cell = TorCell.from_json(payload_str)
+            cell = TorCell.from_bytes(data)
             
             # --- Handle CREATE ---
-            if isinstance(cell, CreateCell) and cell.command == "CREATE":
+            if cell.cmd == TorCommands.CREATE:
                 self.logger.info("Richiesta CREATE ricevuta")
 
-                
-                unpacked_payload = unpack_fields_dict(cell.payload)
-                
-                g_x1_bytes_encrypted = unpacked_payload[FieldType.DH_PARAMETER_BYTES] #il primo elemento di un payload è sempre DH_PARAMETER_BYTES o TOR_CELL
+                g_x1_bytes_encrypted = decode_payload(cell.data)[0]
+
+                print(g_x1_bytes_encrypted)
 
                 g_x1_bytes_decrypted = rsa_decrypt(self._priv, g_x1_bytes_encrypted) 
                 y1, g_y1, H_K1, K1 = process_dh_handshake_response(g_x1_bytes_decrypted)
                 
                 # Store the session key for this circuit
-                self.circuit_keys[cell.circ_id] = K1
+                self.circuit_keys[cell.circid] = K1
                 
-                
-                f1 = pack_field(FieldType.DH_PARAMETER_BYTES, g_y1.to_bytes((g_y1.bit_length() + 7) // 8, 'big'))
-                f2 = pack_field(FieldType.DH_HASH_K_BYTES, H_K1)
-            
+                g_y1_to_bytes = data_to_bytes(g_y1) 
 
-                created_cell = CreatedCell(
-                    circ_id=cell.circ_id,
-                    payload=f1+f2
+                created_cell = TorCell(
+                    circid=cell.circid,  # Stesso circuit ID
+                    cmd=TorCommands.CREATED,
+                    data=encode_payload([g_y1_to_bytes,H_K1])
                 )
-                return created_cell.to_json().encode("utf-8")
+        
+                return created_cell.to_bytes()
                 
-            elif isinstance(cell, CreatedCell) and cell.command == "CREATED":
+            elif cell.cmd == TorCommands.CREATED:
                 self.logger.info("Risposta CREATED ricevuta")
 
-                unpacked_payload = unpack_fields_dict(cell.payload)
+                g_y1_bytes = decode_payload(cell.data)[0]
+                H_K_TO_BE_FORWARDED = decode_payload(cell.data)[1]
 
-                g_y1_bytes = unpacked_payload[FieldType.DH_PARAMETER_BYTES]
-                H_K_TO_BE_FORWARDED=unpacked_payload[FieldType.DH_HASH_K_BYTES]
-
-                
-                f1 = pack_field(FieldType.DH_PARAMETER_BYTES, g_y1_bytes)
-                f2 = pack_field(FieldType.DH_HASH_K_BYTES, H_K_TO_BE_FORWARDED)
 
                 # Use the stored session key for this circuit   
-                K = self.circuit_keys.get(cell.circ_id, self.circuit_keys[cell.circ_id])
-                payload_to_be_forwarded_encrypted, _ = aes_ctr_encrypt(f1+f2, K, "backward")
+                K = self.circuit_keys.get(1, self.circuit_keys[1]) #SISTEMAREEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+
+                is_relay_encrypted, _ = aes_ctr_encrypt(data_to_bytes(True), K, "backward")
+                relay__encrypted, _ = aes_ctr_encrypt(data_to_bytes(RelayCommands.EXTENDED), K, "backward")
+                streamid_encrypted, _ = aes_ctr_encrypt(data_to_bytes(0), K, "backward")
+                digest_encrypted, _ = aes_ctr_encrypt(data_to_bytes(calculate_digest(K)), K, "backward")
+                payload_encrypted, _ = aes_ctr_encrypt(encode_payload([g_y1_bytes, H_K_TO_BE_FORWARDED]), K, "backward")
                 
-                relay_header = RelayHeader(
-                    relay_command="RELAY_EXTENDED",  # RELAY_EXTENDED
-                    stream_id=0,
-                    digest=calculate_digest(self.circuit_keys[cell.circ_id]), #dummy value, client non deve controllarlo credo
-                    length=len(payload_to_be_forwarded_encrypted)
+                relay_cell = TorCell(
+                    circid=1, 
+                    cmd=TorCommands.RELAY, 
+                    is_relay=is_relay_encrypted,
+                    relay=relay__encrypted,  
+                    streamid=streamid_encrypted,
+                    digest=digest_encrypted,
+                    data=payload_encrypted
                 )
                 
-                relay_response = RelayCell(
-                    circ_id=cell.circ_id,
-                    relay_header=relay_header,
-                    relay_payload=payload_to_be_forwarded_encrypted
-                )
-                
-                return relay_response.to_json().encode("utf-8")
+                return relay_cell.to_bytes()
                 
             # --- Handle RELAY_EXTEND ---
-            elif isinstance(cell, RelayCell) and cell.relay_header.relay_command == "RELAY_EXTEND":
+            elif cell.is_relay and cell.relay == RelayCommands.EXTEND:
                 self.logger.info("Richiesta RELAY_EXTEND ricevuta")
                 
                 # Use the stored session key for this circuit
-                K = self.circuit_keys.get(cell.circ_id, self.circuit_keys[cell.circ_id])
-                payload_decrypted_K = aes_ctr_decrypt(cell.relay_payload, K, "forward")
+                K = self.circuit_keys.get(cell.circid, self.circuit_keys[cell.circid])
+         
+                is_relay_decrypted, _ = aes_ctr_encrypt(cell.is_relay, self.K1, "forward")
+                relay__decrypted, _ = aes_ctr_encrypt(cell.relay_command, self.K1, "forward")
+                streamid_decrypted, _ = aes_ctr_encrypt(cell.streamid, self.K1, "forward")
+                digest_decrypted, _ = aes_ctr_encrypt(cell.digest, self.K1, "forward")
+                payload_decrypted, _ = aes_ctr_decrypt(cell.data, K, "forward")
                 
-                unpacked_payload = unpack_fields_dict(payload_decrypted_K)
+                if digest_decrypted == calculate_digest(K):
 
-                g_x1_bytes_encrypted = unpacked_payload[FieldType.DH_PARAMETER_BYTES]
-                port = unpacked_payload[FieldType.PORT]
-                ip = unpacked_payload[FieldType.IP]
-               
-                
-                if cell.relay_header.digest == calculate_digest(K):
+                    decoded_payload = decode_payload(payload_decrypted)
+                    g_x1_bytes_encrypted = decoded_payload[0]
+                    port = decoded_payload[1]
+                    ip = decoded_payload[2]
 
-                    f1 = pack_field(FieldType.DH_PARAMETER_BYTES, g_x1_bytes_encrypted)
-                    # Forward CREATE to the next node
-                    create_cell = CreateCell(
-                        circ_id=1,  # circuit ID, choose an appropriate number
-                        payload=f1  # payload for the CREATE cell
+                    g_x1_bytes_encrypted
+                    
+                    create_cell = TorCell(
+                        circid=2,
+                        cmd=TorCommands.CREATE,
+                        data=encode_payload([g_x1_bytes_encrypted])  
                     )
                     
                     # Forward and wait for response
-                    response_data = self._forward_message("127.0.0.1", port, create_cell.to_json().encode("utf-8"))
+                    response_data = self._forward_message("127.0.0.1", port, create_cell.to_bytes())
                     if response_data:
                         # Process the CREATED response and forward it back
                         return self._process_message(response_data)
