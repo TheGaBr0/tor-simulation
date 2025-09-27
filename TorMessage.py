@@ -2,19 +2,19 @@ import struct
 from typing import Union, Optional, List
 
 class TorCommands:
-    CREATE = 0
-    CREATED = 1
-    RELAY = 2
+    CREATE = b'\x00'
+    CREATED = b'\x01'
+    RELAY = b'\x03'
 
 class RelayCommands:
-    EXTEND = 0
-    EXTENDED = 1
-
+    EXTEND = b'\x00'
+    EXTENDED = b'\x01'
 
 class TorCell:
     """
     Classe per gestire le celle del protocollo Tor.
     Supporta sia celle standard che celle relay.
+    Circuit ID può essere fornito come int o bytes.
     """
     
     # Dimensioni fisse dei campi (in bytes)
@@ -31,31 +31,45 @@ class TorCell:
     STANDARD_CELL_SIZE = CIRCID_SIZE + CMD_SIZE + STANDARD_DATA_SIZE  # 512 bytes
     RELAY_CELL_SIZE = CIRCID_SIZE + CMD_SIZE + RELAY_SIZE + STREAMID_SIZE + DIGEST_SIZE + LEN_SIZE + DATA_SIZE  # 512 bytes
     
-    def __init__(self, circid: int, cmd: int, data: bytes = b'', 
-                 is_relay: bool = False, relay: int = 0, streamid: int = 0, 
-                 digest: bytes = b'', length: int = 0):
+    def __init__(self, circid: Union[int, bytes], cmd: bytes, data: bytes = b'', 
+                 relay: bytes = b'\x00', streamid: bytes = b'\x00\x00', 
+                 digest: bytes = b'', length: bytes = b'\x00\x00'):
         """
         Inizializza una cella Tor.
         
         Args:
-            circid: Circuit ID (2 bytes)
-            cmd: Command (1 byte)
+            circid: Circuit ID (int o 2 bytes) - se int, viene convertito automaticamente
+            cmd: Command (1 byte) - usa TorCommands per determinare il tipo
             data: Dati della cella
-            is_relay: Se True, crea una cella relay
             relay: Relay command (1 byte, solo per celle relay)
             streamid: Stream ID (2 bytes, solo per celle relay)
             digest: Digest (6 bytes, solo per celle relay)
             length: Lunghezza dei dati (2 bytes, solo per celle relay)
         """
-        self.circid = circid
-        self.cmd = cmd
-        self.is_relay = is_relay
+        # Convert circid to bytes if it's an integer
+        if isinstance(circid, int):
+            if circid < 0 or circid > 65535:  # 2^16 - 1
+                raise ValueError(f"Circuit ID deve essere tra 0 e 65535, ricevuto {circid}")
+            self.circid = circid.to_bytes(self.CIRCID_SIZE, byteorder='big')
+            self._circid_int = circid  # Store the original int for easy access
+        else:
+            self.circid = self._ensure_bytes_length(circid, self.CIRCID_SIZE)
+            self._circid_int = int.from_bytes(self.circid, byteorder='big')
         
-        if is_relay:
-            self.relay = relay
-            self.streamid = streamid
-            self.digest = digest if digest else b'\x00' * self.DIGEST_SIZE
-            self.length = length if length > 0 else len(data)
+        self.cmd = self._ensure_bytes_length(cmd, self.CMD_SIZE)
+        
+        if self._is_relay_cell():
+            self.relay = self._ensure_bytes_length(relay, self.RELAY_SIZE)
+            self.streamid = self._ensure_bytes_length(streamid, self.STREAMID_SIZE)
+            self.digest = self._ensure_bytes_length(digest, self.DIGEST_SIZE) if digest else b'\x00' * self.DIGEST_SIZE
+            
+            # If length is not provided, calculate it from data length
+            if length == b'\x00\x00':
+                data_len = len(data)
+                self.length = struct.pack('>H', data_len)
+            else:
+                self.length = self._ensure_bytes_length(length, self.LEN_SIZE)
+            
             # Assicura che i dati non superino la dimensione massima
             self.data = data[:self.DATA_SIZE] if data else b''
             # Padding dei dati se necessario
@@ -66,6 +80,16 @@ class TorCell:
             # Padding dei dati se necessario
             self.data = self.data.ljust(self.STANDARD_DATA_SIZE, b'\x00')
     
+    def _is_relay_cell(self) -> bool:
+        """Helper interno per determinare se è una cella relay basato sul comando"""
+        return self.cmd == TorCommands.RELAY
+    
+    def _ensure_bytes_length(self, data: bytes, expected_length: int) -> bytes:
+        """Assicura che i bytes abbiano la lunghezza corretta, aggiungendo padding se necessario"""
+        if len(data) > expected_length:
+            return data[:expected_length]
+        return data.ljust(expected_length, b'\x00')
+    
     def to_bytes(self) -> bytes:
         """
         Converte la cella in bytes per l'invio.
@@ -73,26 +97,18 @@ class TorCell:
         Returns:
             bytes: Rappresentazione binaria della cella
         """
-        if self.is_relay:
+        if self._is_relay_cell():
             # Formato: CircID(2) + CMD(1) + Relay(1) + StreamID(2) + Digest(6) + Len(2) + DATA(498)
-            return struct.pack(
-                '>HB B H 6s H 498s',
-                self.circid,
-                self.cmd,
-                self.relay,
-                self.streamid,
-                self.digest[:self.DIGEST_SIZE],
-                self.length,
-                self.data
-            )
+            return (self.circid + 
+                   self.cmd + 
+                   self.relay + 
+                   self.streamid + 
+                   self.digest + 
+                   self.length + 
+                   self.data)
         else:
             # Formato: CircID(2) + CMD(1) + DATA(509)
-            return struct.pack(
-                '>HB 509s',
-                self.circid,
-                self.cmd,
-                self.data
-            )
+            return self.circid + self.cmd + self.data
     
     @classmethod
     def from_bytes(cls, data: bytes) -> 'TorCell':
@@ -112,65 +128,73 @@ class TorCell:
             raise ValueError(f"I dati devono essere esattamente 512 bytes, ricevuti {len(data)}")
         
         # Leggi i primi 3 bytes per determinare il tipo
-        circid, cmd = struct.unpack('>HB', data[:3])
+        circid = data[:2]
+        cmd = data[2:3]
         
         # Determina se è una cella relay controllando il comando
-        # I comandi relay sono tipicamente RELAY (3) o RELAY_EARLY (9)
-        is_relay_cmd = cmd in [3, 9]  # RELAY, RELAY_EARLY
+        relay_cmd_check = cmd == TorCommands.RELAY
         
-        if is_relay_cmd:
+        if relay_cmd_check:
             # Parsing come cella relay
-            unpacked = struct.unpack('>HB B H 6s H 498s', data)
+            relay = data[3:4]
+            streamid = data[4:6]
+            digest = data[6:12]
+            length = data[12:14]
+            payload = data[14:]
+            
             return cls(
-                circid=unpacked[0],
-                cmd=unpacked[1],
-                is_relay=True,
-                relay=unpacked[2],
-                streamid=unpacked[3],
-                digest=unpacked[4],
-                length=unpacked[5],
-                data=unpacked[6]
+                circid=circid,
+                cmd=cmd,
+                relay=relay,
+                streamid=streamid,
+                digest=digest,
+                length=length,
+                data=payload
             )
         else:
             # Parsing come cella standard
-            unpacked = struct.unpack('>HB 509s', data)
+            payload = data[3:]
             return cls(
-                circid=unpacked[0],
-                cmd=unpacked[1],
-                is_relay=False,
-                data=unpacked[2]
+                circid=circid,
+                cmd=cmd,
+                data=payload
             )
     
-    # Proprietà per accesso statico ai campi
+    # Proprietà per accesso ai campi
     @property
-    def circuit_id(self) -> int:
-        """Circuit ID (2 bytes)"""
+    def circuit_id(self) -> bytes:
+        """Circuit ID come bytes (2 bytes)"""
         return self.circid
     
     @property
-    def command(self) -> int:
+    def circuit_id_int(self) -> int:
+        """Circuit ID come integer"""
+        return self._circid_int
+    
+    @property
+    def command(self) -> bytes:
         """Command (1 byte)"""
         return self.cmd
     
     @property
-    def relay_command(self) -> Optional[int]:
+    def relay_command(self) -> Optional[bytes]:
         """Relay command (1 byte, solo per celle relay)"""
-        return self.relay if self.is_relay else None
+        return self.relay if self._is_relay_cell() else None
     
     @property
-    def stream_id(self) -> Optional[int]:
+    def stream_id(self) -> Optional[bytes]:
         """Stream ID (2 bytes, solo per celle relay)"""
-        return self.streamid if self.is_relay else None
+        return self.streamid if self._is_relay_cell() else None
     
     @property
     def digest_field(self) -> Optional[bytes]:
         """Digest (6 bytes, solo per celle relay)"""
-        return self.digest if self.is_relay else None
+        return self.digest if self._is_relay_cell() else None
     
     @property
-    def data_length(self) -> Optional[int]:
+    def data_length(self) -> Optional[bytes]:
         """Lunghezza dati (2 bytes, solo per celle relay)"""
-        return self.length if self.is_relay else None
+        return self.length if self._is_relay_cell() else None
     
     @property
     def payload(self) -> bytes:
@@ -180,22 +204,28 @@ class TorCell:
     @property
     def effective_data(self) -> bytes:
         """Dati effettivi senza padding (solo per celle relay)"""
-        if self.is_relay and hasattr(self, 'length'):
-            return self.data[:self.length]
+        if self._is_relay_cell() and hasattr(self, 'length'):
+            # Convert length bytes to int to slice data
+            length_int = struct.unpack('>H', self.length)[0]
+            return self.data[:length_int]
         return self.data
     
+    def is_relay_type(self) -> bytes:
+        """Restituisce il comando della cella (usa TorCommands.RELAY per celle relay)"""
+        return self.cmd
+    
     def __repr__(self) -> str:
-        if self.is_relay:
-            return (f"TorCell(circid={self.circid}, cmd={self.cmd}, "
-                   f"relay={self.relay}, streamid={self.streamid}, "
-                   f"length={self.length}, is_relay=True)")
+        if self._is_relay_cell():
+            return (f"TorCell(circid={self._circid_int}, cmd={self.cmd.hex()}, "
+                   f"relay={self.relay.hex()}, streamid={self.streamid.hex()}, "
+                   f"length={self.length.hex()}, type=RELAY)")
         else:
-            return f"TorCell(circid={self.circid}, cmd={self.cmd}, is_relay=False)"
+            return f"TorCell(circid={self._circid_int}, cmd={self.cmd.hex()}, type=STANDARD)"
     
     def __len__(self) -> int:
         """Restituisce sempre 512 bytes come da specifica Tor"""
         return 512
-    
+
 def encode_payload(params: List[bytes]) -> bytes:
     """
     Encode a list of byte parameters into a single payload using 4-byte length prefix.
@@ -203,15 +233,10 @@ def encode_payload(params: List[bytes]) -> bytes:
     payload = b''.join(struct.pack('>I', len(p)) + p for p in params)
     return payload
 
-def decode_payload(payload: bytes) -> List[bytes]:
-    """
-    Decode a payload with length-prefixed parameters back into a list of bytes.
-    """
-    payload = payload.rstrip('\0')
-
+def decode_payload(payload: bytes, num_params: int) -> List[bytes]:
     params = []
     i = 0
-    while i < len(payload):
+    for _ in range(num_params):
         if i + 4 > len(payload):
             raise ValueError("Incomplete length prefix in payload")
         length = struct.unpack('>I', payload[i:i+4])[0]
@@ -221,3 +246,29 @@ def decode_payload(payload: bytes) -> List[bytes]:
         params.append(payload[i:i+length])
         i += length
     return params
+
+# Helper functions for converting between int and bytes
+def int_to_bytes(value: int, length: int) -> bytes:
+    """Convert integer to bytes with specified length"""
+    return value.to_bytes(length, byteorder='big')
+
+def bytes_to_int(data: bytes) -> int:
+    """Convert bytes to integer"""
+    return int.from_bytes(data, byteorder='big')
+
+# Convenience functions for common conversions
+def circid_from_int(value: int) -> bytes:
+    """Convert circuit ID from int to bytes"""
+    return int_to_bytes(value, 2)
+
+def cmd_from_int(value: int) -> bytes:
+    """Convert command from int to bytes"""
+    return int_to_bytes(value, 1)
+
+def streamid_from_int(value: int) -> bytes:
+    """Convert stream ID from int to bytes"""
+    return int_to_bytes(value, 2)
+
+def length_from_int(value: int) -> bytes:
+    """Convert length from int to bytes"""
+    return int_to_bytes(value, 2)

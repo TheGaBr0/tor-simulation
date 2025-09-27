@@ -4,7 +4,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 import secrets
 import hashlib
-
+import socket
 # ----------------------------
 # Utility per chiavi RSA
 # ----------------------------
@@ -64,12 +64,12 @@ def rsa_decrypt(privkey_bytes: bytes, ciphertext: bytes) -> bytes:
     )
 
 # ----------------------------
-# Utility per diffie hellman
+# Utility per hash
 # ----------------------------
 
 def calculate_digest(K: int):
     K_bytes = data_to_bytes(K)
-    return hashlib.sha256(K_bytes).digest()
+    return hashlib.sha256(K_bytes).digest()[:6]
 
 
 # ----------------------------
@@ -195,4 +195,15 @@ def aes_ctr_decrypt(ciphertext: bytes, key_material: int, direction: str) -> byt
 # ----------------------------
 
 def data_to_bytes(value: object) -> bytes:
-    return value.to_bytes((value.bit_length() + 7) // 8, 'big')
+    if isinstance(value, int):
+        # Convert integer to bytes
+        return value.to_bytes((value.bit_length() + 7) // 8 or 1, 'big')
+    elif isinstance(value, str):
+        try:
+            # Try IPv4 first
+            return socket.inet_aton(value)
+        except OSError:
+            # If IPv4 fails, try IPv6
+            return socket.inet_pton(socket.AF_INET6, value)
+    else:
+        raise TypeError(f"Unsupported type for data_to_bytes: {type(value)}")
