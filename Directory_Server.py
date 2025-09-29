@@ -127,6 +127,7 @@ class DirectoryServer:
                 case "RETRIEVE":
                     self.logger.info(f"Richiesta RETRIEVE ricevuta")
                     response_data = self.create_nodes_packet()
+                    print(len(response_data))
                     client_socket_reply.sendall(response_data)
 
             client_socket_reply.shutdown(socket.SHUT_RDWR)
@@ -147,7 +148,7 @@ class DirectoryServer:
     
 
 
-    def _make_network(self, num_guards=10, num_relays=10, num_exits=10, compromise_fraction=0.1) -> List[Node]:
+    def _make_network(self, num_guards=20, num_relays=20, num_exits=20, compromise_fraction=0.1) -> List[Node]:
         first_port = 20000
         # create guards
         for i in range(num_guards):
@@ -206,7 +207,7 @@ class DirectoryServer:
         return f"{a}.{b}.{c}.{d}"
 
     def _random_owner(self) -> str:
-        list_owner=["Bob","Alice","Chiara"]
+        list_owner=["Bob","Alice","Charlie","Diana","Eve"]
         return random.choice(list_owner)
 
     def _random_band_width(self) -> int:

@@ -24,19 +24,24 @@ def main():
     provider_server_1.start()
 
     client_1 = Client("C1", random_ipv4(), 22000, 22001)
+    client_2 = Client("C2", random_ipv4(), 43000, 43001)
+
 
     if client_1.connect_to_tor_network(circuit_id = 1):
         client_1.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "cazzonculo", circuit_id=1)
 
-    client_1.connect_to_tor_network(circuit_id = 10)
-       
+    if client_2.connect_to_tor_network(circuit_id = 2):
+       client_2.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "cazzonculo", circuit_id=2)
 
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
         client_1.guard_chosen.stop()
-        client_1.relay_chosen.stop()
+        
+        for node in client_1.relays_chosen:
+            node.stop()
+
         client_1.exit_chosen.stop()
 
         provider_server_1.stop()
