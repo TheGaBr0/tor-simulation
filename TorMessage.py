@@ -9,6 +9,10 @@ class TorCommands:
 class RelayCommands:
     EXTEND = b'\x00'
     EXTENDED = b'\x01'
+    BEGIN = b'\x02'
+    CONNECTED = b'\x03'
+    END = b'\x04'
+    DATA = b'\x05'
 
 class TorCell:
     """

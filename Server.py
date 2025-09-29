@@ -2,6 +2,7 @@ import threading
 import socket
 import logging
 from typing import Optional, Dict
+from Cryptograpy_utils import *
 import json
 from TorMessage import *
 
@@ -30,6 +31,8 @@ class Server:
             # Crea socket server
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            
+            # FIXED: Bind before listen
             self.server_socket.bind((self.bind_ip, self.port))
             self.server_socket.listen(5)
             
@@ -103,37 +106,19 @@ class Server:
         self.logger.info(f"Nuova connessione da {client_id}")
         
         try:
-            # Set timeout for client socket
-            client_socket.settimeout(10.0)
             
             # Ricevi dati
-            data = client_socket.recv(4096)
-            if not data:
-                self.logger.warning(f"Nessun dato ricevuto da {client_id}")
-                return
-                
-            self.logger.info(f"Ricevuto messaggio raw: {data.decode('utf-8')} da {client_id}")
-            
-            response_payload = {
-                "payload": "culoncazzo",
-            }
-            
-            response_data = json.dumps(response_payload).encode('utf-8')
-            
-            # Invia risposta
-            client_socket.sendall(response_data)
-            self.logger.info(f"Risposta inviata a {client_id}: {response_payload}")
+            while True:
+                data = client_socket.recv(4096)
+                if not data:
+                    break
+                self.logger.info(f"Ricevuto messaggio da {client_id}")
+                response = encode_payload([data_to_bytes("culoncazzo")])
+                client_socket.sendall(response)     
     
-        
         except socket.timeout:
             self.logger.error(f"Timeout gestione client {client_id}")
         except Exception as e:
             self.logger.error(f"Errore gestione client {client_id}: {e}")
-        finally:
-            # Chiudi sempre la connessione
-            try:
-                client_socket.shutdown(socket.SHUT_RDWR)
-                client_socket.close()
-                self.logger.info(f"Connessione chiusa con {client_id}")
-            except Exception as e:
+        except Exception as e:
                 self.logger.debug(f"Errore chiusura connessione con {client_id}: {e}")

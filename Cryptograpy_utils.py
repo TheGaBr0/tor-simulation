@@ -199,11 +199,20 @@ def data_to_bytes(value: object) -> bytes:
         # Convert integer to bytes
         return value.to_bytes((value.bit_length() + 7) // 8 or 1, 'big')
     elif isinstance(value, str):
+        # First try to parse as IP address
         try:
             # Try IPv4 first
             return socket.inet_aton(value)
         except OSError:
-            # If IPv4 fails, try IPv6
-            return socket.inet_pton(socket.AF_INET6, value)
+            try:
+                # If IPv4 fails, try IPv6
+                return socket.inet_pton(socket.AF_INET6, value)
+            except OSError:
+                # If both IP formats fail, treat as regular string
+                return value.encode('utf-8')
+    elif isinstance(value, bytes):
+        # Already bytes, return as-is
+        return value
     else:
-        raise TypeError(f"Unsupported type for data_to_bytes: {type(value)}")
+        # For other types, convert to string first, then to bytes
+        return str(value).encode('utf-8')

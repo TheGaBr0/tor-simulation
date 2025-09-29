@@ -25,9 +25,11 @@ def main():
 
     client_1 = Client("C1", random_ipv4(), 22000, 22001)
 
-    client_1.connect_to_tor_network()
+    if client_1.connect_to_tor_network(circuit_id = 1):
+        client_1.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "cazzonculo", circuit_id=1)
 
-
+    client_1.connect_to_tor_network(circuit_id = 10)
+       
 
     try:
         while True:

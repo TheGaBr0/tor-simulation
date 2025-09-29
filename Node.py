@@ -13,78 +13,66 @@ from RoutingEntry import RoutingEntry
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 class Node:
-    def __init__(self, node_id: str, node_type: str, ip_address: str, band_width: int , owner: str, port: int, compromise: bool = False):
+    def __init__(self, node_id: str, node_type: str, ip_address: str, band_width: int, 
+                 owner: str, port: int, compromise: bool = False):
         self.id = node_id
         self.ip = ip_address
-        self.type = node_type  # guard/relay/exit
+        self.type = node_type
         self._priv, self.pub = gen_rsa_keypair()
         self.compromised = compromise
         self.band_width = band_width
         self.owner = owner
         
-        # Socket e threading
         self.bind_ip = "127.0.0.1"
         self.port = port
         self.server_socket: Optional[socket.socket] = None
         self.running = False
-        self.connections: Dict[str, socket.socket] = {}
-        
-        # Routing table - mappa destination -> next_hop
-        self.routing_table: Dict[str, tuple] = {}  # destination_id -> (ip, port)
-        
-        # Store session keys for different circuits
         self.routing_table: List[RoutingEntry] = []
+
+        self.persistent_connections: Dict[str, socket.socket] = {}
+        self.circuit_stream_socket_map: Dict[(int, int), socket.socket] = {}
         
         self.logger = logging.getLogger(f"Nodo-{self.id}")
 
     def __str__(self):
-        """Restituisce una rappresentazione stringa leggibile del nodo"""
         bandwidth_labels = {0: "bassa", 1: "media", 2: "alta"}
-        bandwidth_str = bandwidth_labels.get(self.band_width, "sconosciuta")
-        status = "attivo" if self.running else "inattivo"
-        compromise_str = "compromesso" if self.compromised else "sicuro"
-        return (f"Node(id='{self.id}', type='{self.type}', "
-                f"ip='{self.ip}:{self.port}', bandwidth='{bandwidth_str}', "
-                f"owner='{self.owner}', status='{status}', security='{compromise_str}')")
+        return (f"Node(id='{self.id}', type='{self.type}', ip='{self.ip}:{self.port}', "
+                f"bandwidth='{bandwidth_labels.get(self.band_width, 'sconosciuta')}', "
+                f"owner='{self.owner}', status='{'attivo' if self.running else 'inattivo'}', "
+                f"security='{'compromesso' if self.compromised else 'sicuro'}')")
 
     def start(self):
-        """Avvia il nodo - inizia ad ascoltare per connessioni"""
         if self.running:
             self.logger.warning("Nodo già attivo")
             return
             
         try:
-            # Crea socket server
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.server_socket.bind((self.bind_ip, self.port))
             self.server_socket.listen(5)
             self.running = True
             
-            # Avvia thread server
             self.server_thread = threading.Thread(target=self._node_loop, daemon=True)
             self.server_thread.start()
             
             self.logger.info(f"Nodo avviato su {self.bind_ip}:{self.port} (IP pubblico: {self.ip})")
-            
         except Exception as e:
             self.logger.error(f"Errore nell'avvio del nodo: {e}")
             self.stop()
 
     def stop(self):
-        """Ferma il nodo"""
         self.running = False
-        
-        # Chiudi tutte le connessioni
-        for conn in self.connections.values():
+
+        for conn in self.persistent_connections.values():
             try:
                 conn.shutdown(socket.SHUT_RDWR)
                 conn.close()
             except:
                 pass
-        self.connections.clear()
+        self.persistent_connections.clear()
+    
         
-        # Chiudi server socket
         if self.server_socket:
             try:
                 self.server_socket.shutdown(socket.SHUT_RDWR)
@@ -94,10 +82,7 @@ class Node:
             finally:
                 self.server_socket = None
                 
-        self.running = False
-        
         if hasattr(self, 'server_thread') and self.server_thread.is_alive():
-            self.logger.debug("Aspettando terminazione server thread...")
             self.server_thread.join(timeout=2.0)
             if self.server_thread.is_alive():
                 self.logger.warning("Server thread non terminato entro timeout")
@@ -105,20 +90,13 @@ class Node:
         self.logger.info("Nodo fermato")
 
     def _node_loop(self):
-        """Loop principale del nodo - accetta connessioni"""
         while self.running:
             try:
-                self.server_socket.settimeout(1.0)  # Timeout per permettere shutdown
                 client_socket, addr = self.server_socket.accept()
                 
-                # Gestisci connessione in thread separato
-                client_thread = threading.Thread(
-                    target=self._handle_connection, 
-                    args=(client_socket, addr), 
-                    daemon=True
-                )
+                client_thread = threading.Thread(target=self._handle_connection, 
+                                                args=(client_socket, addr), daemon=True)
                 client_thread.start()
-                
             except socket.timeout:
                 continue
             except Exception as e:
@@ -126,33 +104,30 @@ class Node:
                     self.logger.error(f"Errore nel server loop: {e}")
 
     def _handle_connection(self, client_socket: socket.socket, addr):
-        """Gestisce una connessione"""
         client_id = f"{addr[0]}:{addr[1]}"
         self.logger.info(f"Nuova connessione da {client_id}")
         
+        self.persistent_connections[client_id] = client_socket
+
         try:
-            # Set timeout for client socket
-            client_socket.settimeout(10.0)
-            
-            # Ricevi dati
-            data = client_socket.recv(4096)
-            if not data:
-                self.logger.warning(f"Nessun dato ricevuto da {client_id}")
-                return
+            while self.running:  # MODIFICA: loop per mantenere connessione aperta
+                data = client_socket.recv(4096)
                 
-            response_data = self._process_message(data, addr[0], addr[1])
-            if response_data:
-                client_socket.sendall(response_data)
-            
-            client_socket.shutdown(socket.SHUT_RDWR)
-            client_socket.close()
-            
+                if not data:
+                    self.logger.info(f"Client {client_id} ha chiuso la connessione")
+                    break
+                    
+                response_data = self._process_message(data, addr[0], addr[1])
+                if response_data:
+                    client_socket.sendall(response_data)
+                
         except socket.timeout:
             self.logger.error(f"Timeout gestione client {client_id}")
         except Exception as e:
             self.logger.error(f"Errore gestione client {client_id}: {e}")
         finally:
-            # Chiudi sempre la connessione
+            if client_id in self.persistent_connections:
+                del self.persistent_connections[client_id]
             try:
                 client_socket.shutdown(socket.SHUT_RDWR)
                 client_socket.close()
@@ -161,188 +136,220 @@ class Node:
                 self.logger.debug(f"Errore chiusura connessione con {client_id}: {e}")
 
     def _process_message(self, data, ip, port):
-        """Processa un messaggio ricevuto"""
         try:
-            # Decode JSON to get a TorCell object
+            
             cell = TorCell.from_bytes(data)
                 
-            # --- Handle CREATE ---
             if cell.cmd == TorCommands.CREATE:
-                self.logger.info("Richiesta CREATE ricevuta")
-
-                g_x1_bytes_encrypted = decode_payload(cell.data, 1)[0]
-
-                g_x1_bytes_decrypted = rsa_decrypt(self._priv, g_x1_bytes_encrypted)
-                
-                y1, g_y1, H_K, K = process_dh_handshake_response(g_x1_bytes_decrypted)
-                
-                self.routing_table.append(RoutingEntry(ip, port, int.from_bytes(cell.circid), K))
-
-                g_y1_to_bytes = data_to_bytes(g_y1) 
-
-                created_cell = TorCell(
-                    circid=int.from_bytes(cell.circid),  # Stesso circuit ID
-                    cmd=TorCommands.CREATED,
-                    data=encode_payload([g_y1_to_bytes,H_K])
-                )
-        
-                return created_cell.to_bytes()
-                
+                return self._handle_create(cell, ip, port)
             elif cell.cmd == TorCommands.CREATED:
-                self.logger.info("Risposta CREATED ricevuta")
-
-                decoded_payload = decode_payload(cell.data, 2)
-
-                g_y1_bytes = decoded_payload[0]
-                H_K_TO_BE_FORWARDED = decoded_payload[1]
-
-                for routing_entry in self.routing_table:
-                    if routing_entry.get_circuit_id() == int.from_bytes(cell.circid) - 1:
-                       K = routing_entry.get_session_key()
-                       break
-
-                relay_encrypted, _ = aes_ctr_encrypt(RelayCommands.EXTENDED, K, "backward")
-                streamid_encrypted, _ = aes_ctr_encrypt(data_to_bytes(0), K, "backward")
-                digest_encrypted, _ = aes_ctr_encrypt(calculate_digest(K), K, "backward")
-                payload_encrypted, _ = aes_ctr_encrypt(encode_payload([g_y1_bytes, H_K_TO_BE_FORWARDED]), K, "backward")
-                
-                if port == None:
-                    relay_cell = TorCell(
-                        circid=int.from_bytes(cell.circid) -1, 
-                        cmd=TorCommands.RELAY, 
-                        relay=relay_encrypted,  
-                        streamid=streamid_encrypted,
-                        digest=digest_encrypted,
-                        data=payload_encrypted
-                    )
-                else:
-                    relay_cell = TorCell(
-                        circid=int.from_bytes(cell.circid), 
-                        cmd=TorCommands.RELAY, 
-                        relay=relay_encrypted,  
-                        streamid=streamid_encrypted,
-                        digest=digest_encrypted,
-                        data=payload_encrypted
-                    )
-
-                
-                
-                return relay_cell.to_bytes()
-                
-            # --- Handle RELAY_EXTEND ---
+                return self._handle_created(cell, port)
             elif cell.cmd == TorCommands.RELAY:
-
-                if port == None:
-                    self.logger.info("Richiesta RELAY_EXTENDED ricevuta")
-
-                    for routing_entry in self.routing_table:
-                        if routing_entry.get_circuit_id() == int.from_bytes(cell.circid) - 1:
-                            K = routing_entry.get_session_key()
-                        break
-                    
-                    relay_encrypted, _ = aes_ctr_encrypt(cell.relay, K, "backward")
-                    streamid_encrypted, _ = aes_ctr_encrypt(cell.stream_id, K, "backward")
-                    digest_encrypted, _ = aes_ctr_encrypt(cell.digest, K, "backward")
-                    payload_encrypted, _ = aes_ctr_encrypt(cell.payload, K, "backward")
-                    
-                    relay_cell = TorCell(
-                        circid=int.from_bytes(cell.circid), 
-                        cmd=TorCommands.RELAY, 
-                        relay=relay_encrypted,  
-                        streamid=streamid_encrypted,
-                        digest=digest_encrypted,
-                        data=payload_encrypted
-                    )
-
-                    return relay_cell.to_bytes()
-
-                else:
-                    self.logger.info("Richiesta RELAY_EXTEND ricevuta")
-
-                    for routing_entry in self.routing_table:
-                        if routing_entry.get_circuit_id() == int.from_bytes(cell.circid):
-                            K = routing_entry.get_session_key()
-                        break
-                    
-                    relay_decrypted = aes_ctr_decrypt(cell.relay_command, K, "forward")
-                    streamid_decrypted = aes_ctr_decrypt(cell.streamid, K, "forward")
-                    digest_decrypted = aes_ctr_decrypt(cell.digest, K, "forward")
-                    payload_decrypted = aes_ctr_decrypt(cell.data, K, "forward")
-
-                    if digest_decrypted == calculate_digest(K):
-                        self.logger.info("Digest verificato: inoltro CREATE")
-                        decoded_payload = decode_payload(payload_decrypted, 3)
-
-                        g_x1_bytes_encrypted = decoded_payload[0]
-                        port = int.from_bytes(decoded_payload[1])
-                        ip = decoded_payload[2]
-
-                        for routing_entry in self.routing_table:
-                            if routing_entry.get_circuit_id() == int.from_bytes(cell.circid):
-                                routing_entry.set_dest_coords(str(ipaddress.IPv4Address(ip)), port)
-                                break
-                        
-                        create_cell = TorCell(
-                            circid=int.from_bytes(cell.circid) + 1,
-                            cmd=TorCommands.CREATE,
-                            data=encode_payload([g_x1_bytes_encrypted])  
-                        )
-                        
-                        # Forward and wait for response
-                        response_data = self._forward_message("127.0.0.1", port, create_cell.to_bytes())
-                        if response_data:
-                            # Process the CREATED response and forward it back
-                            return self._process_message(response_data, None, None)
-                        else:
-                            self.logger.error("No response from forwarded CREATE")
-                            return None
-                    else:
-                        self.logger.info("Digest non verificato: inoltro EXTEND")
-
-                        relay_cell = TorCell(
-                            circid=int.from_bytes(cell.circid)+1, 
-                            cmd=TorCommands.RELAY, 
-                            relay=relay_decrypted,  
-                            streamid=streamid_decrypted,
-                            digest=digest_decrypted,
-                            data=payload_decrypted
-                        )
-
-                        for routing_entry in self.routing_table:
-                            if routing_entry.get_circuit_id() == int.from_bytes(cell.circid):
-                                port = routing_entry.get_dest_coords()[1]
-                                break
-
-                        response_data = self._forward_message("127.0.0.1", port, relay_cell.to_bytes())
-                        if response_data:
-                            # Process the CREATED response and forward it back
-                            return self._process_message(response_data, None, None)
-                        else:
-                            self.logger.error("No response from forwarded CREATE")
-                            return None
-                    
-            return None
-            
+                return self._handle_relay(cell, ip, port)
+                
         except Exception as e:
             self.logger.error(f"Error processing message: {e}")
-            return None
+        return None
+
+    def _handle_create(self, cell, ip, port):
+        self.logger.info("Cella CREATE ricevuta")
+        
+        g_x1_bytes_encrypted = decode_payload(cell.data, 1)[0]
+        g_x1_bytes_decrypted = rsa_decrypt(self._priv, g_x1_bytes_encrypted)
+        
+        y1, g_y1, H_K, K = process_dh_handshake_response(g_x1_bytes_decrypted)
+        self.routing_table.append(RoutingEntry(ip, port, int.from_bytes(cell.circid), K))
+        
+        created_cell = TorCell(circid=int.from_bytes(cell.circid), cmd=TorCommands.CREATED,
+                              data=encode_payload([data_to_bytes(g_y1), H_K]))
+        return created_cell.to_bytes()
+
+    def _handle_created(self, cell, port):
+        self.logger.info("Cella CREATED ricevuta")
+        
+        decoded_payload = decode_payload(cell.data, 2)
+        g_y1_bytes, H_K_TO_BE_FORWARDED = decoded_payload[0], decoded_payload[1]
+        
+        # Find session key
+        K = next(entry.get_session_key() for entry in self.routing_table 
+                if entry.get_circuit_id() == int.from_bytes(cell.circid) - 1)
+        
+        # Encrypt response
+        relay_encrypted, _ = aes_ctr_encrypt(RelayCommands.EXTENDED, K, "backward")
+        streamid_encrypted, _ = aes_ctr_encrypt(data_to_bytes(0), K, "backward")
+        digest_encrypted, _ = aes_ctr_encrypt(calculate_digest(K), K, "backward")
+        payload_encrypted, _ = aes_ctr_encrypt(encode_payload([g_y1_bytes, H_K_TO_BE_FORWARDED]), K, "backward")
+        
+        circuit_id = int.from_bytes(cell.circid) - 1 if port is None else int.from_bytes(cell.circid)
+        relay_cell = TorCell(circid=circuit_id, cmd=TorCommands.RELAY, relay=relay_encrypted,
+                           streamid=streamid_encrypted, digest=digest_encrypted, data=payload_encrypted)
+        return relay_cell.to_bytes()
+
+    def _handle_relay(self, cell, ip, port):
+        if port is None:
+            return self._handle_relay_backward(cell)
+        else:
+            return self._handle_relay_forward(cell, ip, port)
+
+    def _handle_relay_backward(self, cell):
+        self.logger.info("Cella RELAY ricevuta")
+        
+        # Find session key and encrypt
+
+        K = next(entry.get_session_key() for entry in self.routing_table 
+                if entry.get_circuit_id() == int.from_bytes(cell.circid) - 1)
+        
+        relay_encrypted, _ = aes_ctr_encrypt(cell.relay, K, "backward")
+        streamid_encrypted, _ = aes_ctr_encrypt(cell.stream_id, K, "backward")
+        digest_encrypted, _ = aes_ctr_encrypt(cell.digest, K, "backward")
+        payload_encrypted, _ = aes_ctr_encrypt(cell.payload, K, "backward")
+        
+        relay_cell = TorCell(circid=int.from_bytes(cell.circid)-1, cmd=TorCommands.RELAY,
+                           relay=relay_encrypted, streamid=streamid_encrypted,
+                           digest=digest_encrypted, data=payload_encrypted)
+        return relay_cell.to_bytes()
+
+    def _handle_relay_forward(self, cell, ip, port):
+        self.logger.info("Cella RELAY ricevuta")
+        
+        # Find session key and decrypt
+        K = next(entry.get_session_key() for entry in self.routing_table 
+                if entry.get_circuit_id() == int.from_bytes(cell.circid))
+        
+        relay_decrypted = aes_ctr_decrypt(cell.relay_command, K, "forward")
+        streamid_decrypted = aes_ctr_decrypt(cell.streamid, K, "forward")
+        digest_decrypted = aes_ctr_decrypt(cell.digest, K, "forward")
+        payload_decrypted = aes_ctr_decrypt(cell.data, K, "forward")
+        
+        if digest_decrypted == calculate_digest(K):
+            self.logger.info("Digest verificato")
+            if relay_decrypted == RelayCommands.EXTEND:
+                self.logger.info("Cella RELAY EXTEND identificata: inoltro CREATE")
+                return self._forward_create(cell, payload_decrypted)
+            elif relay_decrypted == RelayCommands.BEGIN:
+                self.logger.info("Cella RELAY BEGIN identificata: stabilisco connessione con server")
+                return self._connect_to_server(cell.circid, streamid_decrypted, payload_decrypted, ip, port)
+            elif relay_decrypted == RelayCommands.DATA:
+                self.logger.info("Cella RELAY DATA identificata: inoltro dati a server")
+
+                dst_socket = self.circuit_stream_socket_map.get((int.from_bytes(cell.circid), int.from_bytes(streamid_decrypted)))
+
+                dst_socket.send(payload_decrypted)
+                response_data = dst_socket.recv(1000000)
+
+                if response_data:
+                    # Encrypt the response for backward transmission
+                    relay_encrypted, _ = aes_ctr_encrypt(RelayCommands.DATA, K, "backward")
+                    streamid_encrypted, _ = aes_ctr_encrypt(streamid_decrypted, K, "backward")
+                    digest_encrypted, _ = aes_ctr_encrypt(calculate_digest(K), K, "backward")
+                    payload_encrypted, _ = aes_ctr_encrypt(response_data, K, "backward")
+                    
+                    # Create RELAY DATA cell with server response
+                    data_cell = TorCell(circid=int.from_bytes(cell.circid), cmd=TorCommands.RELAY, 
+                                    relay=relay_encrypted, streamid=streamid_encrypted,
+                                    digest=digest_encrypted, data=payload_encrypted)
+                    return data_cell.to_bytes()
+                else:
+                    return None
+        else:
+            self.logger.info("Digest non verificato: inoltro RELAY")
+            return self._forward_relay(cell, relay_decrypted, streamid_decrypted, 
+                                      digest_decrypted, payload_decrypted)
+
+    def _connect_to_server(self, circuid, streamid, payload, ip, port):
+
+        decoded_payload = decode_payload(payload, 2)
+
+        ip_bytes, port_bytes = decoded_payload[0], decoded_payload[1]
+
+        port = int.from_bytes(port_bytes)
+        
+        ip_str = str(ipaddress.IPv4Address(ip_bytes))
+
+        response = self._forward_message("127.0.0.1", port, data_to_bytes(12345))
+
+        K = next(entry.get_session_key() for entry in self.routing_table 
+                if entry.get_circuit_id() == int.from_bytes(circuid)) #è sempre l'exit quindi non diminuisco circid
+                
+        streamid_encrypted, _ = aes_ctr_encrypt(streamid, K, "backward")
+        digest_encrypted, _ = aes_ctr_encrypt(calculate_digest(K), K, "backward")
+        payload_encrypted, _ = aes_ctr_encrypt(response, K, "backward")
+        
+        if response:
+            self.logger.info("Connessione con server stabilita con successo: inoltro RELAY CONNECTED")
+
+            self.circuit_stream_socket_map[(int.from_bytes(circuid), int.from_bytes(streamid))] = self.persistent_connections.get(f"{ip}:{port}")
+
+            relay_encrypted, _ = aes_ctr_encrypt(RelayCommands.CONNECTED, K, "backward")
+            connected_cell = TorCell(circid=int.from_bytes(circuid), cmd=TorCommands.RELAY, relay=relay_encrypted,
+                            streamid=streamid_encrypted, digest=digest_encrypted, data=payload_encrypted)
+            return connected_cell.to_bytes()
+        else:
+            self.logger.info("Connessione con server fallita: inoltro END")
+            relay_encrypted, _ = aes_ctr_encrypt(RelayCommands.END, K, "backward")
+            end_cell = TorCell(circid=int.from_bytes(circuid), cmd=TorCommands.RELAY, relay=relay_encrypted,
+                            streamid=streamid_encrypted, digest=digest_encrypted, data=payload_encrypted)
+            return end_cell.to_bytes()
+
+    def _forward_create(self, cell, payload_decrypted):
+        decoded_payload = decode_payload(payload_decrypted, 3)
+        g_x1_bytes_encrypted, port_bytes, ip_bytes = decoded_payload[0], decoded_payload[1], decoded_payload[2]
+        
+        port = int.from_bytes(port_bytes)
+        ip_str = str(ipaddress.IPv4Address(ip_bytes))
+        
+        # Update routing table
+        for entry in self.routing_table:
+            if entry.get_circuit_id() == int.from_bytes(cell.circid):
+                entry.set_dest_coords(ip_str, port)
+                break
+        
+        create_cell = TorCell(circid=int.from_bytes(cell.circid) + 1, cmd=TorCommands.CREATE,
+                             data=encode_payload([g_x1_bytes_encrypted]))
+        
+        response_data = self._forward_message("127.0.0.1", port, create_cell.to_bytes())
+        return self._process_message(response_data, None, None) if response_data else None
+
+    def _forward_relay(self, cell, relay_decrypted, streamid_decrypted, digest_decrypted, payload_decrypted):
+        
+        relay_cell = TorCell(circid=int.from_bytes(cell.circid) + 1, cmd=TorCommands.RELAY,
+                           relay=relay_decrypted, streamid=streamid_decrypted,
+                           digest=digest_decrypted, data=payload_decrypted)
+        
+        # Find destination port
+        port = next(entry.get_dest_coords()[1] for entry in self.routing_table 
+                   if entry.get_circuit_id() == int.from_bytes(cell.circid))
+        
+        response_data = self._forward_message("127.0.0.1", port, relay_cell.to_bytes())
+        return self._process_message(response_data, None, None) if response_data else None
 
     def _forward_message(self, destination_ip: str, port: int, data):
-        """Invia un messaggio a un altro nodo"""
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.settimeout(5.0)  # Timeout di 5 secondi
-                sock.connect((destination_ip, port))
+
+        destination_key = f"{destination_ip}:{port}"
+
+        if destination_key in self.persistent_connections:
+            try:
+                sock = self.persistent_connections[destination_key]
                 sock.send(data)
-                
-                # Wait for response
                 response_data = sock.recv(1000000)
-                if not response_data:
-                    self.logger.warning(f"No response data received from {destination_ip}:{port}")
-                    return None
-                else:
-                    return response_data
-                    
+                return response_data if response_data else None
+            except Exception as e:
+                self.logger.warning(f"Errore su connessione esistente a {destination_key}: {e}")
+                # Rimuovi connessione non funzionante
+                del self.persistent_connections[destination_key]
+
+        # Crea nuova connessione se non esiste o quella esistente è fallita
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((destination_ip, port))
+            
+            # AGGIUNTA: salva la nuova connessione per riutilizzo
+
+            self.persistent_connections[destination_key] = sock
+            
+            sock.send(data)
+            response_data = sock.recv(1000000)
+            return response_data if response_data else None
         except Exception as e:
             self.logger.error(f"Errore invio messaggio a {destination_ip}:{port}: {e}")
             return None
