@@ -30,8 +30,8 @@ def main():
     if client_1.connect_to_tor_network(circuit_id = 1):
         client_1.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "cazzonculo", circuit_id=1)
 
-    if client_2.connect_to_tor_network(circuit_id = 2):
-       client_2.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "cazzonculo", circuit_id=2)
+    if client_2.connect_to_tor_network(circuit_id = 1):
+       client_2.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "cazzonculo", circuit_id=1)
 
     try:
         while True:

@@ -338,7 +338,8 @@ class Client:
                 g_y1 = int.from_bytes(g_y1_bytes, 'big')
                 self.circuit_relays_map[int.from_bytes(cell.circid)].append(pow(g_y1, self.x1, DH_PRIME))
                 H_K1 = process_dh_handshake_final(g_y1_bytes, self.x1)
-                
+                self.logger.info(int.from_bytes(cell.circid))
+
                 print(f"Confronto chiavi:\n{H_K1.hex()}\n{H_K1_toCheck.hex()}\nUguaglianza: {H_K1_toCheck == H_K1}")
                 return H_K1_toCheck == H_K1
             
@@ -450,10 +451,12 @@ class Client:
         
         # Step 1: Choose guard
 
-        if not self.guard_chosen:
-            guard = self._choose_from_top3(self.nodes, "guard")
-        else:
-            guard = self.guard_chosen
+        #if not self.guard_chosen:
+        #    guard = self._choose_from_top3(self.nodes, "guard")
+        #else:
+        #    guard = self.guard_chosen
+
+        guard = [n for n in self.nodes if n.type == "guard"][0]
 
         circuit.append(guard)
         used_owners.add(guard.owner)
@@ -475,7 +478,8 @@ class Client:
                 raise ValueError(f"No available relays for position {i+2} in circuit")
             
             # Select best relay
-            relay = self._select_best_node(available_relays)
+            #relay = self._select_best_node(available_relays)
+            relay = available_relays[0]
             circuit.append(relay)
             used_owners.add(relay.owner)
             used_subnets.add(self._get_16_subnet(relay.ip))
@@ -491,7 +495,8 @@ class Client:
         if not available_exits:
             raise ValueError("No available exits for circuit")
         
-        exit_node = self._select_best_node(available_exits)
+        #exit_node = self._select_best_node(available_exits)
+        exit_node = available_exits[0]
         circuit.append(exit_node)
         
         return circuit
