@@ -6,6 +6,13 @@ from Cryptograpy_utils import *
 import json
 from TorMessage import *
 
+RECORDS = {
+    "alpha": "Record A",
+    "beta": "Record B",
+    "gamma": "Record C"
+}
+
+
 class Server:
     def __init__(self, server_id: str, ip: str, port: int):
         self.id = server_id
@@ -112,13 +119,28 @@ class Server:
                 data = client_socket.recv(4096)
                 if not data:
                     break
-                self.logger.info(f"Ricevuto messaggio da {client_id}")
-                response = encode_payload([data_to_bytes("culoncazzo")])
+
+                self.logger.info(f"Ricevuta richiesta da {client_id}")
+
+                response = self._process_message(data)
+
                 client_socket.sendall(response)     
     
         except socket.timeout:
             self.logger.error(f"Timeout gestione client {client_id}")
         except Exception as e:
             self.logger.error(f"Errore gestione client {client_id}: {e}")
-        except Exception as e:
-                self.logger.debug(f"Errore chiusura connessione con {client_id}: {e}")
+       
+
+    def _process_message(self, data):
+        
+        requested_key = decode_payload(data, 1)[0].decode('utf-8')
+
+        self.logger.info(f"Richiesta per la chiave: '{requested_key}'")
+
+        record = RECORDS.get(requested_key, f"Errore: Chiave '{requested_key}' non trovata.")
+
+        return encode_payload([data_to_bytes(record)])
+
+
+

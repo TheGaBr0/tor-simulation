@@ -284,7 +284,7 @@ class Node:
         
         ip_str = str(ipaddress.IPv4Address(ip_bytes))
 
-        response = self._forward_message("127.0.0.1", port, data_to_bytes(12345))
+        response = self._forward_message("127.0.0.1", port, encode_payload([data_to_bytes("test")]))
 
         K = routing_entry.get_session_key()
                 

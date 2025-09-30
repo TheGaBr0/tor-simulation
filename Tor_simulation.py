@@ -23,15 +23,18 @@ def main():
     provider_server_1 = Server("S1", random_ipv4(), 21000)
     provider_server_1.start()
 
+    provider_server_2 = Server("S2", random_ipv4(), 27000)
+    provider_server_2.start()
+
     client_1 = Client("C1", random_ipv4(), 22000, 22001)
     client_2 = Client("C2", random_ipv4(), 43000, 43001)
 
 
     if client_1.connect_to_tor_network(circuit_id = 1):
-        client_1.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "cazzonculo", circuit_id=1)
+        client_1.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "alpha", circuit_id=1)
 
     if client_2.connect_to_tor_network(circuit_id = 1):
-       client_2.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "cazzonculo", circuit_id=1)
+       client_2.send_message_to_tor_network(provider_server_2.ip, provider_server_2.port, "beta", circuit_id=1)
 
     try:
         while True:

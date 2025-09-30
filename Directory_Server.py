@@ -127,7 +127,6 @@ class DirectoryServer:
                 case "RETRIEVE":
                     self.logger.info(f"Richiesta RETRIEVE ricevuta")
                     response_data = self.create_nodes_packet()
-                    print(len(response_data))
                     client_socket_reply.sendall(response_data)
 
             client_socket_reply.shutdown(socket.SHUT_RDWR)
