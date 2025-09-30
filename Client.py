@@ -24,7 +24,7 @@ class Client:
         self.id = id
         self.ip = ip
         self.choice_algorithm = choice_algorithm
-        self.running = False
+        self.running =        False
 
         self.len_of_circuit = None
 
