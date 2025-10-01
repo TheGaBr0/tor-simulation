@@ -147,7 +147,7 @@ class DirectoryServer:
     
 
 
-    def _make_network(self, num_guards=20, num_relays=20, num_exits=20, compromise_fraction=0.1) -> List[Node]:
+    def _make_network(self, num_guards=10, num_relays=10, num_exits=10, compromise_fraction=0.1) -> List[Node]:
         first_port = 20000
         # create guards
         for i in range(num_guards):

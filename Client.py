@@ -339,7 +339,7 @@ class Client:
                 self.circuit_relays_map[int.from_bytes(cell.circid)].append(pow(g_y1, self.x1, DH_PRIME))
                 H_K1 = process_dh_handshake_final(g_y1_bytes, self.x1)
 
-                print(f"Confronto chiavi:\n{H_K1.hex()}\n{H_K1_toCheck.hex()}\nUguaglianza: {H_K1_toCheck == H_K1}")
+                #print(f"Confronto chiavi:\n{H_K1.hex()}\n{H_K1_toCheck.hex()}\nUguaglianza: {H_K1_toCheck == H_K1}")
                 return H_K1_toCheck == H_K1
             
             if cell.cmd == TorCommands.RELAY:
@@ -367,7 +367,7 @@ class Client:
                             H_K = process_dh_handshake_final(g_y1_bytes, self.x1)
                             
                             if H_K == H_K2_toCheck:
-                                self.logger.info(f"Confronto chiavi avvenuto con successo:\n{H_K.hex()}\n{H_K2_toCheck.hex()}")
+                                #self.logger.info(f"Confronto chiavi avvenuto con successo:\n{H_K.hex()}\n{H_K2_toCheck.hex()}")
                                 self.circuit_relays_map[int.from_bytes(cell.circid)].append(pow(g_y1, self.x1, DH_PRIME))
                                 return True
                         except Exception:
@@ -406,10 +406,10 @@ class Client:
                 return stream_id
 
     
-    def _choose_from_top3(self, nodes, node_type):
+    def _choose_from_top5(self, nodes, node_type):
         filtered = [n for n in self.nodes if n.type == node_type]
         sorted_nodes = sorted(filtered, key=lambda n: n.band_width, reverse=True)
-        best_three = sorted_nodes[:3]
+        best_three = sorted_nodes[:5]
         
         if self.choice_algorithm != 'greedy':
             random.shuffle(best_three)
@@ -420,12 +420,12 @@ class Client:
         Select the best node from a list based on bandwidth and choice algorithm
         """
         sorted_nodes = sorted(nodes, key=lambda n: n.band_width, reverse=True)
-        best_three = sorted_nodes[:3]
+        best_five = sorted_nodes[:5]
         
         if self.choice_algorithm != 'greedy':
-            random.shuffle(best_three)
+            random.shuffle(best_five)
         
-        return best_three[0]
+        return best_five[0]
     
     def _get_16_subnet(self, ip: str) -> str:
         """
@@ -451,7 +451,7 @@ class Client:
         # Step 1: Choose guard
 
         if not self.guard_chosen:
-            guard = self._choose_from_top3(self.nodes, "guard")
+            guard = self._choose_from_top5(self.nodes, "guard")
         else:
             guard = self.guard_chosen
 
