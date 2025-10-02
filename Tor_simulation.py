@@ -5,6 +5,7 @@ from Directory_Server import DirectoryServer
 from typing import List
 import random
 import time
+from tor_security_sim import SecurityTest
 
 def random_ipv4() -> str:
         """Ritorna una stringa IPv4 casuale."""
@@ -17,8 +18,12 @@ def random_ipv4() -> str:
 
 def main():
     dir_server= DirectoryServer(random_ipv4(),9000)
+    interesting_nodes=[]
+    compromission_rate=100
+    
 
     dir_server.start()
+    i=0
 
     provider_server_1 = Server("S1", random_ipv4(), 21000)
     provider_server_1.start()
@@ -27,14 +32,31 @@ def main():
     provider_server_2.start()
 
     client_1 = Client("C1", random_ipv4(), 22000, 22001)
-    client_2 = Client("C2", random_ipv4(), 43000, 43001)
+    #client_2 = Client("C2", random_ipv4(), 43000, 43001)
 
+
+   
 
     if client_1.connect_to_tor_network(circuit_id = 1):
-        client_1.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "alpha", circuit_id=1)
+        for node in client_1.nodes:
+            if node.compromised:
+                interesting_nodes.append(node)
+        sim = SecurityTest(interesting_nodes,compromission_rate)
+        sim.network_analysis()
+        #sim.correlation_attack()
+        while i<4:
+            client_1.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "alpha", circuit_id=1)
+            i=i+1
+        sim.circuit_building_attack()
 
-    if client_2.connect_to_tor_network(circuit_id = 1):
-       client_2.send_message_to_tor_network(provider_server_2.ip, provider_server_2.port, "beta", circuit_id=1)
+       
+
+    #if client_2.connect_to_tor_network(circuit_id = 1):
+    #   client_2.send_message_to_tor_network(provider_server_2.ip, provider_server_2.port, "beta", circuit_id=1)
+    #   for node in client_1.nodes:
+    #        if node.running:
+    #            interesting_nodes.append(node)
+
 
     try:
         while True:
