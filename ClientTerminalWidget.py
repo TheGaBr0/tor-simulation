@@ -146,6 +146,27 @@ class TerminalWidget(QWidget):
                 100, 
                 lambda cid=self.client_id, circ=circuit_id: self.client.manager.connect_client(cid, circ)
             )
+
+        elif cmd == "destroy":
+            if len(parts) != 2:
+                self.append_log("Usage: destroy <circuit_id>")
+                return
+            try:
+                circuit_id = int(parts[1])
+            except ValueError:
+                self.append_log("ERROR: Circuit ID must be an integer")
+                return
+
+            if not hasattr(self.client, "manager"):
+                self.append_log("ERROR: Client not linked to a manager")
+                return
+
+            self.append_log(f"Scheduling destruction of circuit {circuit_id}...")
+            QTimer.singleShot(
+                100,
+                lambda cid=self.client_id, circ=circuit_id: 
+                    self.client.manager.destroy_client_circuit(cid, circ)
+            )
         
         elif cmd == "send":
             if len(parts) < 5:

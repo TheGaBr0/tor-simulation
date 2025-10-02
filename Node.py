@@ -148,6 +148,55 @@ class Node:
                 return self._handle_created(cell, port)
             elif cell.cmd == TorCommands.RELAY:
                 return self._handle_relay(cell, ip, port, direction)
+            elif cell.cmd == TorCommands.DESTROY:
+                
+                routing_entry = next(
+                    (entry for entry in self.routing_table
+                    if entry.get_in_circ_id() == int.from_bytes(cell.circid)
+                    and entry.get_source_coords() == (ip, port)),
+                    None  # default if no match is found
+                )
+
+                if self.type != "exit":
+
+                    for entry in self.routing_table:
+                        self.logger.info(entry)
+
+                    self.logger.info(self.persistent_connections)
+
+                    self.logger.info(f"Destroying circuit {routing_entry.get_in_circ_id()}-{routing_entry.get_out_circ_id()}...")
+
+                    destroy_cell = TorCell(circid=routing_entry.get_out_circ_id(), cmd=TorCommands.DESTROY, data=b'null')
+                    forward_sock = self.persistent_connections.get(f"127.0.0.1:{routing_entry.get_dest_coords()[1]}")
+                    forward_sock.send(destroy_cell.to_bytes())
+
+                    self.routing_table.remove(routing_entry)
+
+                    self.logger.info("Destroyed...")
+
+                    for entry in self.routing_table:
+                        self.logger.info(entry)
+
+                    self.logger.info(self.persistent_connections)
+
+
+                else:
+                    self.logger.info(f"Destroying circuit {routing_entry.get_out_circ_id()}")
+                    
+                    self.routing_table.remove(routing_entry)
+                    
+                    # Collect keys to remove
+                    keys_to_remove = [
+                        key for key in self.circuit_stream_socket_map.keys()
+                        if key[0] == routing_entry.get_in_circ_id()
+                    ]
+
+                    # Now safely remove them
+                    for key in keys_to_remove:
+                        self.circuit_stream_socket_map.pop(key)
+                    self.logger.info("Destroyed...")
+
+
                 
         except Exception as e:
             self.logger.error(f"Error processing message: {e}")
@@ -224,6 +273,7 @@ class Node:
     def _handle_relay_forward(self, cell, ip, port):
         self.logger.info("Cella RELAY ricevuta")
 
+
         # Find session key and decrypt
         routing_entry = next(
                     (entry for entry in self.routing_table
@@ -295,6 +345,7 @@ class Node:
         if response:
             self.logger.info("Connessione con server stabilita con successo: inoltro RELAY CONNECTED")
 
+            routing_entry.set_dest_coords("127.0.0.1", port)
             self.circuit_stream_socket_map[(routing_entry.get_in_circ_id(), int.from_bytes(streamid))] = self.persistent_connections.get(f"{ip}:{port}")
 
             relay_encrypted, _ = aes_ctr_encrypt(RelayCommands.CONNECTED, K, "backward")

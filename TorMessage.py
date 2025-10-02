@@ -5,6 +5,7 @@ class TorCommands:
     CREATE = b'\x00'
     CREATED = b'\x01'
     RELAY = b'\x03'
+    DESTROY = b'\x04'
 
 class RelayCommands:
     EXTEND = b'\x00'

@@ -6,6 +6,7 @@ from Node import Node
 from typing import List, Optional, Dict, Tuple
 from collections import defaultdict
 
+import time
 import random
 import logging
 import socket
@@ -162,12 +163,56 @@ class Client:
         
         self.handshake_enstablished = self.establish_circuit(circuit_id)
         return self.handshake_enstablished
+    
+    def destroy_circuit(self, circuit_id):
+
+        self.logger.info(f"Destroying circuit {circuit_id}...")
+
+        destroy_cell = TorCell(circid=circuit_id, cmd=TorCommands.DESTROY, data=b'null')
+        sock = self.persistent_connections.get(f"127.0.0.1:{self.guard_chosen.port}")
+
+        if not sock:
+            self.logger.warning(f"No connection found for circuit {circuit_id}")
+            return False
+
+        # Send destroy message
+        sock.send(destroy_cell.to_bytes())
+
+        # Wait for destroy to propagate through the circuit
+        time.sleep(2)
+
+        # Remove circuit-specific data
+        keys_to_remove = [key for key, value in self.server_stream_circuit_map.items() 
+                        if value[0] == circuit_id]
+        for key in keys_to_remove:
+            self.server_stream_circuit_map.pop(key)
+
+        self.circuit_relays_map.pop(circuit_id, None)
+
+        # Check if any other circuits are using the same guard connection
+        other_circuits_using_guard = [
+            cid for cid in self.circuit_relays_map.keys() 
+            if cid != circuit_id
+        ]
+
+        # Only close the connection if no other circuits are using it
+        if not other_circuits_using_guard:
+            self.persistent_connections.pop(f"127.0.0.1:{self.guard_chosen.port}", None)
+            sock.close()
+            self.logger.info(f"Closed connection to guard (no other circuits using it)")
+        else:
+            self.logger.info(f"Keeping connection to guard (other circuits: {other_circuits_using_guard})")
+
+        self.logger.info(f"Circuit {circuit_id} destroyed")
+        return True
 
     def send_message_to_tor_network(self, server_ip: str, server_port: int, payload: str, circuit_id: int):
-
-        success = self.enstablish_connection_with_server(server_ip, server_port, circuit_id)
         
+        self.logger.info("Connessione con server...")
+        success = self.enstablish_connection_with_server(server_ip, server_port, circuit_id)
+
         if(success):
+            self.logger.info("Connessione con server avvenuta con successo, invio dati")
             self.send_message_to_server(server_ip, server_port, payload)
 
     def enstablish_connection_with_server(self, server_ip: str, server_port: int, circuit_id: int) -> bool:
@@ -251,7 +296,6 @@ class Client:
         # Crea nuova connessione se non esiste o quella esistente è fallita
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(10.0)
             sock.connect((server_ip, server_port))
             
             # AGGIUNTA: salva la nuova connessione per riutilizzo

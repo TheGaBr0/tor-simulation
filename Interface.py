@@ -245,6 +245,14 @@ class DynamicNetworkEditor(QGraphicsView):
         self._compute_positions()
         self._draw_nodes()
 
+    def highlight_nodes(self, node_ids, color="#e74c3c", thickness=4):
+        """Highlight the given nodes with a colored border"""
+        for node_id in node_ids:
+            node = self.nodes.get(node_id)
+            if node:
+                pen = QPen(QColor(color), thickness)
+                node.setPen(pen)
+
     def _compute_positions(self):
         # spacing between nodes
         self.node_spacing = 80
@@ -344,3 +352,27 @@ class DynamicNetworkEditor(QGraphicsView):
 
         # Expand scene to fit all items
         self.scene.setSceneRect(self.scene.itemsBoundingRect().adjusted(-50, -50, 50, 50))
+
+    def remove_connection_path(self, node_ids):
+        """Remove arrows connecting the given node_ids"""
+        if len(node_ids) < 2:
+            return
+
+        arrows_to_remove = []
+        for item in self.scene.items():
+            if isinstance(item, BidirectionalArrow):
+                start_id = getattr(item.start_node, 'node_id', None)
+                end_id = getattr(item.end_node, 'node_id', None)
+                # check if arrow matches the path
+                for sid, eid in zip(node_ids, node_ids[1:]):
+                    if (start_id == sid and end_id == eid) or (start_id == eid and end_id == sid):
+                        arrows_to_remove.append(item)
+                        break
+
+        for arrow in arrows_to_remove:
+            # Remove from nodes' arrow lists
+            if hasattr(arrow.start_node, 'arrows'):
+                arrow.start_node.arrows.remove(arrow)
+            if hasattr(arrow.end_node, 'arrows'):
+                arrow.end_node.arrows.remove(arrow)
+            self.scene.removeItem(arrow)

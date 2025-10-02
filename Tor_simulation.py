@@ -20,32 +20,51 @@ def random_ipv4() -> str:
     return f"{a}.{b}.{c}.{d}"
 
 class ConnectionWorker(QObject):
-    """Worker to handle connection in background thread with Qt signals"""
-    connection_ready = pyqtSignal(list, str)
-    
+    connection_ready = pyqtSignal(list, str)  # path, color
+
     def __init__(self, client, circuit_id, color):
         super().__init__()
         self.client = client
         self.circuit_id = circuit_id
         self.color = color
-    
+
     def connect(self):
         """Run connection in background thread"""
         if self.client.connect_to_tor_network(circuit_id=self.circuit_id):
-            connection = [
+            path = [
                 self.client.id,
                 self.client.guard_chosen.id,
                 *[r.id for r in self.client.relays_chosen],
-                self.client.exit_chosen.id,
+                self.client.exit_chosen.id
             ]
-            print(f"Connection established for {self.client.id}: {connection}")
-            self.connection_ready.emit(connection, self.color)
+            print(f"Connection established for {self.client.id}: {path}")
+            self.connection_ready.emit(path, self.color)
+
+class DestroyCircuitWorker(QObject):
+    """Worker to destroy a Tor circuit asynchronously"""
+    destroyed = pyqtSignal(str, int, list)  # client_id, circuit_id, path node_ids
+
+    def __init__(self, client, circuit_id, client_id, path_node_ids):
+        super().__init__()
+        self.client = client
+        self.circuit_id = circuit_id
+        self.client_id = client_id
+        self.path_node_ids = path_node_ids
+
+    def run(self):
+        try:
+            # Destroy the circuit on the client
+            self.client.destroy_circuit(self.circuit_id)
+            print(f"Destroyed circuit {self.circuit_id} for client {self.client_id}")
+            self.destroyed.emit(self.client_id, self.circuit_id, self.path_node_ids)
+        except Exception as e:
+            print(f"Error destroying circuit {self.circuit_id} for {self.client_id}: {e}")
 
 class SendMessageWorker(QObject):
-    """Worker to send a message via Tor circuit"""
-    message_sent = pyqtSignal(str, str, str)  # exit_id, server_id, color
+    # emit: exit_id, server_id, color, circuit_id, client_id
+    message_sent = pyqtSignal(str, str, str, int, str)
 
-    def __init__(self, client, server_ip, server_port, payload, circuit_id, color, server_id):
+    def __init__(self, client, server_ip, server_port, payload, circuit_id, color, server_id, exit_id, client_id):
         super().__init__()
         self.client = client
         self.server_ip = server_ip
@@ -54,6 +73,8 @@ class SendMessageWorker(QObject):
         self.circuit_id = circuit_id
         self.color = color
         self.server_id = server_id
+        self.exit_id = exit_id
+        self.client_id = client_id
 
     def run(self):
         try:
@@ -63,10 +84,16 @@ class SendMessageWorker(QObject):
                 self.payload,
                 self.circuit_id
             )
-            
-            exit_id = self.client.exit_chosen.id if self.client.exit_chosen else None
-            if exit_id and self.server_id:
-                self.message_sent.emit(exit_id, self.server_id, self.color)
+
+            # emit with circuit_id and client_id
+            if self.exit_id and self.server_id:
+                self.message_sent.emit(
+                    self.exit_id,
+                    self.server_id,
+                    self.color,
+                    self.circuit_id,
+                    self.client_id
+                )
         except Exception as e:
             print(f"Error in SendMessageWorker: {e}")
 
@@ -77,10 +104,12 @@ class EntityConnectionManager:
         self.clients = {}
         self.terminals = {}
         self.servers = {}
+        self.edge_usage = {}
         self.workers = []
         self.colors = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6', '#1abc9c']
         self.color_index = 0
         self.connected_clients = set()
+        self._lock = threading.Lock()  # protect shared state (edge_usage, clients)
     
     def register_client(self, client_id, client, circuit_id):
         """Register a client and a new circuit"""
@@ -181,79 +210,195 @@ class EntityConnectionManager:
             return
     
     def connect_client(self, client_id, circuit_id):
-        """Connect a specific circuit of a client"""
-        if client_id not in self.clients:
-            print(f"Client {client_id} not registered")
-            return
-
         client_info = self.clients[client_id]
-        if circuit_id not in client_info['circuits']:
-            print(f"Circuit {circuit_id} not registered for {client_id}")
-            return
-
         circuit_info = client_info['circuits'][circuit_id]
-        if circuit_info['connected']:
-            print(f"Circuit {circuit_id} of {client_id} already connected")
-            return
 
-        print(f"Initiating connection for {client_id}, circuit {circuit_id}...")
+        worker = ConnectionWorker(client_info['client'], circuit_id, circuit_info['color'])
 
-        # Start worker
-        worker = ConnectionWorker(
-            client_info['client'],
-            circuit_id,
-            circuit_info['color']
-        )
-        worker.connection_ready.connect(self.editor.draw_connection_path)
+        def on_connected(path, color):
+            # store path and edges
+            circuit_info['path'] = path
+            edges = [(path[i], path[i+1]) for i in range(len(path)-1)]
+            circuit_info['edges'] = edges
+            circuit_info['exit_id'] = path[-1]  # last node is the exit
+
+            # increment shared edge usage and draw
+            with self._lock:
+                for edge in edges:
+                    self.edge_usage[edge] = self.edge_usage.get(edge, 0) + 1
+                    print(f"[DEBUG] Increment: Edge {edge} now has usage {self.edge_usage[edge]} (after connect {circuit_id})")
+            self.editor.draw_connection_path(path, color)
+
+            # now that the path is fully known, mark connected
+            circuit_info['connected'] = True
+
+        worker.connection_ready.connect(on_connected)
+
         self.workers.append(worker)
         threading.Thread(target=worker.connect, daemon=True).start()
 
-        # Mark circuit as connected
-        circuit_info['connected'] = True
+
+    def destroy_client_circuit(self, client_id, circuit_id):
+        if client_id not in self.clients:
+            print(f"Client {client_id} not found")
+            return
+
+        circuit_info = self.clients[client_id]['circuits'].get(circuit_id)
+        if not circuit_info:
+            print(f"Circuit {circuit_id} not found for client {client_id}")
+            return
+
+        client = self.clients[client_id]['client']
+        # capture manager-side data now
+        path = circuit_info.get('path', [])  # used for worker
+        edges = circuit_info.get('edges', []).copy() if 'edges' in circuit_info else []
+        exit_server_edges = circuit_info.get('exit_server_edges', []).copy() if 'exit_server_edges' in circuit_info else []
+
+        # reduce edge_usage for the Tor-path edges immediately (so other circuits keep valid counts)
+        with self._lock:
+            for edge in edges:
+                if edge in self.edge_usage:
+                    self.edge_usage[edge] -= 1
+                    print(f"[DEBUG] Decrement: Edge {edge} now has usage {self.edge_usage.get(edge, 0)} (during destroy {circuit_id})")
+                    if self.edge_usage[edge] <= 0:
+                        del self.edge_usage[edge]
+                        # remove GUI connection for this edge (edge is a tuple)
+                        self.editor.remove_connection_path(list(edge))
+
+            # reduce edge_usage for exit->server edges immediately
+            for edge in exit_server_edges:
+                if edge in self.edge_usage:
+                    self.edge_usage[edge] -= 1
+                    print(f"[DEBUG] Decrement: Exit->Server edge {edge} now has usage {self.edge_usage.get(edge, 0)} (during destroy {circuit_id})")
+                    if self.edge_usage[edge] <= 0:
+                        del self.edge_usage[edge]
+                        self.editor.remove_connection_path(list(edge))
+
+            # **Important:** remove the manager-side circuit record now so the later
+            # on_circuit_destroyed handler doesn't double-decrement the same edges.
+            try:
+                del self.clients[client_id]['circuits'][circuit_id]
+                print(f"Circuit {circuit_id} removed from manager records (pending client-side teardown)")
+            except Exception:
+                # if deletion fails, ignore (we'll still start worker)
+                pass
+
+        # Now call the client teardown in background. Manager record already cleaned.
+        worker = DestroyCircuitWorker(client, circuit_id, client_id, path)
+        worker.destroyed.connect(self.on_circuit_destroyed)
+        self.workers.append(worker)
+        threading.Thread(target=worker.run, daemon=True).start()
+
+
+    def on_circuit_destroyed(self, client_id, circuit_id, path_node_ids):
+        client_circuits = self.clients.get(client_id, {}).get('circuits', {})
+        circuit_info = client_circuits.get(circuit_id)
+
+        if not circuit_info:
+            # Manager already removed the circuit during destroy_client_circuit.
+            print(f"Circuit {circuit_id} cleanup: manager had no record (client-side may have removed).")
+            return
+
+        # If somehow manager still has record, do a final safe decrement (double-check)
+        with self._lock:
+            for edge in circuit_info.get('edges', []):
+                if edge in self.edge_usage:
+                    self.edge_usage[edge] -= 1
+                    print(f"[DEBUG] Decrement: Edge {edge} now has usage {self.edge_usage[edge]} (after destroy {circuit_id})")
+
+                    if self.edge_usage[edge] <= 0:
+                        del self.edge_usage[edge]
+                        print(f"[DEBUG] Removing edge {edge} from GUI (no circuits left)")
+                        self.editor.remove_connection_path(list(edge))
+
+            for edge in circuit_info.get('exit_server_edges', []):
+                if edge in self.edge_usage:
+                    self.edge_usage[edge] -= 1
+                    if self.edge_usage[edge] <= 0:
+                        del self.edge_usage[edge]
+                        self.editor.remove_connection_path(list(edge))
+
+            # finally delete the circuit record
+            try:
+                del self.clients[client_id]['circuits'][circuit_id]
+            except Exception:
+                pass
+
+            print(f"Circuit {circuit_id} removed from client {client_id} records and connection cleared")
 
     def send_message(self, client_id, server_ip, server_port, payload, circuit_id):
         """Send message via a specific circuit of a client"""
-        if client_id not in self.clients:
+        client_info = self.clients.get(client_id)
+        if not client_info:
             print(f"Client {client_id} not registered")
             return
 
-        client_info = self.clients[client_id]
-
-        if circuit_id not in client_info['circuits']:
-            print(f"Circuit {circuit_id} not registered for {client_id}")
+        circ = client_info['circuits'].get(circuit_id)
+        if not circ or not circ.get('connected'):
+            print(f"Circuit {circuit_id} not ready for {client_id}")
             return
 
-        # Find server ID by IP/port
+        # find server ID
         server_id = None
         for sid, info in self.servers.items():
             server = info['server']
             if server.ip == server_ip and server.port == server_port:
                 server_id = sid
                 break
-
         if not server_id:
             print(f"No server found with IP {server_ip} and port {server_port}")
             return
 
-        color = client_info['circuits'][circuit_id]['color']
+        circuit = self.clients[client_id]['circuits'][circuit_id]
 
+        if not circuit.get('connected') or 'path' not in circuit:
+            print(f"Circuit {circuit_id} is not ready for sending")
+            return
+
+        exit_id = circuit['path'][-1]  # The last node in the circuit path
         worker = SendMessageWorker(
-            client_info['client'],
-            server_ip,
-            server_port,
-            payload,
-            circuit_id,
-            color,
-            server_id
+            client=self.clients[client_id]['client'],  # use 'client', not 'client_obj'
+            server_ip=server_ip,
+            server_port=server_port,
+            payload=payload,
+            circuit_id=circuit_id,
+            color=circuit['color'],
+            server_id=server_id,
+            exit_id=exit_id,
+            client_id=client_id
         )
+
+        # Connect signal to updated _draw_exit_to_server
         worker.message_sent.connect(self._draw_exit_to_server)
         self.workers.append(worker)
         threading.Thread(target=worker.run, daemon=True).start()
+        
+    def _draw_exit_to_server(self, exit_id, server_id, color, circuit_id, client_id):
+        """Draw exit->server edge and track usage per circuit."""
+        if exit_id not in self.editor.nodes or server_id not in self.editor.nodes:
+            return
 
-    def _draw_exit_to_server(self, exit_id, server_id, color):
-        """Draw line from exit node to server"""
-        if exit_id in self.editor.nodes and server_id in self.editor.nodes:
-            self.editor.draw_connection_path([exit_id, server_id], color)
+        client_info = self.clients.get(client_id)
+        if not client_info:
+            return
+
+        circ = client_info['circuits'].get(circuit_id)
+        if not circ:
+            return
+
+        circ.setdefault('exit_server_edges', [])
+
+        edge = (exit_id, server_id)
+
+        # Only add if not already tracked by this circuit
+        if edge not in circ['exit_server_edges']:
+            circ['exit_server_edges'].append(edge)
+            self.edge_usage[edge] = self.edge_usage.get(edge, 0) + 1
+            print(f"[DEBUG] Increment: Exit->Server edge {edge} now has usage {self.edge_usage[edge]} (circuit {circuit_id})")
+
+        # Draw the path (idempotent, safe to call multiple times)
+        self.editor.draw_connection_path([exit_id, server_id], color)
+
     
     def add_circuit(self, client_id, circuit_id):
         """Add a new circuit to an existing client"""
@@ -276,6 +421,16 @@ class EntityConnectionManager:
         }
 
         print(f"Added circuit {circuit_id} for client {client_id} with color {color}")
+
+    def get_circuit_path(self, client_id, circuit_id):
+        client_info = self.clients.get(client_id)
+        if not client_info:
+            return []
+        # Store the connection path when connecting
+        circuit_info = client_info['circuits'].get(circuit_id)
+        if not circuit_info:
+            return []
+        return circuit_info.get('path', [])
 
 def main():
     # Initialize servers
@@ -303,6 +458,14 @@ def main():
     editor = DynamicNetworkEditor(hosts=hosts, guards=guards, relays=relays, exits=exits, servers=servers)
     editor.setWindowTitle("Dynamic Network Editor - Click on clients to open terminal")
     editor.resize(1400, 800)
+
+    compromised_nodes = [
+        node for group in (dir_server.guards, dir_server.exits, dir_server.relays)
+        for node in group if node.compromised
+    ]
+
+    editor.highlight_nodes(compromised_nodes)
+
     editor.show()
 
     # Create connection manager
@@ -374,6 +537,25 @@ def main():
                 QTimer.singleShot(
                     100,
                     lambda cid=client_id, circ=circuit_id: manager.connect_client(cid, circ)
+                )
+            elif command == "destroy":
+                if len(args) != 1:
+                    terminal.append_log("Usage: destroy <circuit_id>")
+                    return
+                try:
+                    circuit_id = int(args[0])
+                except ValueError:
+                    terminal.append_log("ERROR: Circuit ID must be an integer")
+                    return
+
+                if circuit_id not in manager.clients[client_id]['circuits']:
+                    terminal.append_log(f"Circuit {circuit_id} not found")
+                    return
+
+                terminal.append_log(f"Destroying circuit {circuit_id}...")
+                QTimer.singleShot(
+                    100,
+                    lambda cid=client_id, circ=circuit_id: manager.destroy_client_circuit(cid, circ)
                 )
 
             elif command == "send":
