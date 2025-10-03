@@ -472,7 +472,7 @@ def main():
     editor.resize(1400, 800)
 
     compromised_nodes = [
-        node for group in (dir_server.guards, dir_server.exits, dir_server.relays)
+        node.id for group in (dir_server.guards, dir_server.exits, dir_server.relays)
         for node in group if node.compromised
     ]
 

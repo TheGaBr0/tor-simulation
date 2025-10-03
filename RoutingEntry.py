@@ -1,11 +1,12 @@
 class RoutingEntry:
     def __init__(self, source_ip: str, source_port: int,
-                 in_circ_id: int, out_circ_id: int, session_key):
+                 in_circ_id: int, out_circ_id: int, session_key: int, created_at: int):
         self.source_coords = (source_ip, source_port)
         self.in_circ_id = in_circ_id         
         self.out_circ_id = out_circ_id             
         self._session_key = session_key
         self.dest_coords = (None, None) 
+        self.created_at = created_at
 
     # Getters
     def get_source_coords(self): return self.source_coords
@@ -13,6 +14,7 @@ class RoutingEntry:
     def get_out_circ_id(self): return self.out_circ_id
     def get_session_key(self): return self._session_key
     def get_dest_coords(self): return self.dest_coords
+    def get_creation_timestamp(self): return self.created_at
 
     # Setters
 

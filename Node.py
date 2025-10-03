@@ -30,8 +30,6 @@ class Node:
         self.port = port
         self.server_socket: Optional[socket.socket] = None
         self.running = False
-        self.cnt=0
-        self.first=True
 
         self.routing_table: List[RoutingEntry] = []
         self.persistent_connections: Dict[str, socket.socket] = {}
@@ -241,13 +239,9 @@ class Node:
         y1, g_y1, H_K, K = process_dh_handshake_response(g_x1_bytes_decrypted)
 
         new_routing_entry = RoutingEntry(ip, port, int.from_bytes(cell.circid), 
-                                               self.allocate_circ_id_for_outgoing(int.from_bytes(cell.circid)+1), K)
+                                               self.allocate_circ_id_for_outgoing(int.from_bytes(cell.circid)+1), 
+                                               K, time.time())
         self.routing_table.append(new_routing_entry)
-
-        if not self.first:
-              self.cnt+=1
-              self.incr=0
-        self.first=True
 
         created_cell = TorCell(circid=new_routing_entry.get_in_circ_id(), cmd=TorCommands.CREATED,
                               data=encode_payload([data_to_bytes(g_y1), H_K]))
