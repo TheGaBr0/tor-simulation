@@ -28,10 +28,11 @@ class TerminalWidget(QWidget):
     """Terminal widget for displaying client logs and accepting commands"""
     log_signal = pyqtSignal(str)
     
-    def __init__(self, client_id, client):
+    def __init__(self, client_id, client, editor=None):
         super().__init__()
         self.client_id = client_id
         self.client = client
+        self.editor = editor   # 🔹 nuovo riferimento all’editor grafico
         
         self.setWindowTitle(f"Terminal - {client_id}")
         self.resize(800, 600)
@@ -146,6 +147,11 @@ class TerminalWidget(QWidget):
                 100, 
                 lambda cid=self.client_id, circ=circuit_id: self.client.manager.connect_client(cid, circ)
             )
+            
+            # 🔹 Disegna graficamente il circuito se definito
+            if self.editor and circuit_id in self.client.circuits:
+                self.editor.draw_circuit(circuit_id, color="#27ae60")
+                self.append_log(f"Circuit {circuit_id} drawn in network view")
 
         elif cmd == "destroy":
             if len(parts) != 2:
@@ -167,6 +173,11 @@ class TerminalWidget(QWidget):
                 lambda cid=self.client_id, circ=circuit_id: 
                     self.client.manager.destroy_client_circuit(cid, circ)
             )
+            
+            # 🔹 Rimuovi graficamente il circuito
+            if self.editor:
+                self.editor.remove_circuit(circuit_id)
+                self.append_log(f"Circuit {circuit_id} removed from network view")
         
         elif cmd == "send":
             if len(parts) < 5:

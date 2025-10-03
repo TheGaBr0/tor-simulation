@@ -229,8 +229,8 @@ class EntityConnectionManager:
                 for edge in edges:
                     self.edge_usage[edge] = self.edge_usage.get(edge, 0) + 1
                     print(f"[DEBUG] Increment: Edge {edge} now has usage {self.edge_usage[edge]} (after connect {circuit_id})")
-            self.editor.draw_connection_path(path, color)
-
+                self.editor.circuits[circuit_id] = path
+                self.editor.draw_circuit(circuit_id, color)
             # now that the path is fully known, mark connected
             circuit_info['connected'] = True
 
@@ -267,8 +267,7 @@ class EntityConnectionManager:
                     print(f"[DEBUG] Decrement: Edge {edge} now has usage {self.edge_usage.get(edge, 0)} (during destroy {circuit_id})")
                     if self.edge_usage[edge] <= 0:
                         del self.edge_usage[edge]
-                        # remove GUI connection for this edge (edge is a tuple)
-                        self.editor.remove_connection_path(list(edge))
+                        self.editor.remove_circuit(circuit_id)
 
             # reduce edge_usage for exit->server edges immediately
             for edge in exit_server_edges:
@@ -277,7 +276,7 @@ class EntityConnectionManager:
                     print(f"[DEBUG] Decrement: Exit->Server edge {edge} now has usage {self.edge_usage.get(edge, 0)} (during destroy {circuit_id})")
                     if self.edge_usage[edge] <= 0:
                         del self.edge_usage[edge]
-                        self.editor.remove_connection_path(list(edge))
+                        self.editor.remove_circuit(circuit_id)
 
             # **Important:** remove the manager-side circuit record now so the later
             # on_circuit_destroyed handler doesn't double-decrement the same edges.
@@ -379,8 +378,14 @@ class EntityConnectionManager:
         threading.Thread(target=worker.run, daemon=True).start()
         
     def _draw_exit_to_server(self, exit_id, server_id, color, circuit_id, client_id):
-        """Draw exit->server edge and track usage per circuit."""
-        if exit_id not in self.editor.nodes or server_id not in self.editor.nodes:
+        """Draw exit->server edge and track usage per circuit using DynamicNetworkEditor's draw_circuit."""
+        
+        # Verifica che i nodi esistano
+        if exit_id not in self.editor.nodes:
+            print(f"[DEBUG] Exit node {exit_id} not in editor.nodes, skipping draw")
+            return
+        if server_id not in self.editor.nodes:
+            print(f"[DEBUG] Server node {server_id} not in editor.nodes, skipping draw")
             return
 
         client_info = self.clients.get(client_id)
@@ -393,16 +398,15 @@ class EntityConnectionManager:
 
         circ.setdefault('exit_server_edges', [])
 
-        edge = (exit_id, server_id)
+        # Tratta l'edge come un mini-circuito separato
+        edge_circuit_id = f"{circuit_id}_exit"
+        circ['exit_server_edges'].append((exit_id, server_id))
+        self.edge_usage[(exit_id, server_id)] = self.edge_usage.get((exit_id, server_id), 0) + 1
+        print(f"[DEBUG] Increment: Exit->Server edge ({exit_id}, {server_id}) usage now {self.edge_usage[(exit_id, server_id)]} (circuit {circuit_id})")
 
-        # Only add if not already tracked by this circuit
-        if edge not in circ['exit_server_edges']:
-            circ['exit_server_edges'].append(edge)
-            self.edge_usage[edge] = self.edge_usage.get(edge, 0) + 1
-            print(f"[DEBUG] Increment: Exit->Server edge {edge} now has usage {self.edge_usage[edge]} (circuit {circuit_id})")
-
-        # Draw the path (idempotent, safe to call multiple times)
-        self.editor.draw_connection_path([exit_id, server_id], color)
+        # Disegna usando draw_circuit
+        self.editor.circuits[edge_circuit_id] = [exit_id, server_id]
+        self.editor.draw_circuit(edge_circuit_id, color)
 
     
     def add_circuit(self, client_id, circuit_id):
@@ -487,8 +491,8 @@ def main():
     manager.register_server('S1', provider_server_1)
     manager.register_server('S2', provider_server_2)
 
-    editor.set_node_clickable('S1', manager.on_client_click)
-    editor.set_node_clickable('S2', manager.on_client_click)
+    editor.set_node_clickable('S1', manager.on_server_click)
+    editor.set_node_clickable('S2', manager.on_server_click)
     
     # Register clients
     manager.register_client('C1', client_1, circuit_id=1)
