@@ -19,7 +19,6 @@ def main():
     dir_server= DirectoryServer(random_ipv4(),9000)
 
     dir_server.start()
-    i=0
 
     provider_server_1 = Server("S1", random_ipv4(), 21000)
     provider_server_1.start()
@@ -31,16 +30,24 @@ def main():
     client_2 = Client("C2", random_ipv4(), 22000, 22001)
 
     #client_2 = Client("C2", random_ipv4(), 43000, 43001)
-    interesting_nodes=[]
 
     circuit1 = client_1.connect_to_tor_network(circuit_id = 1)
-    circuit2 = client_2.connect_to_tor_network(circuit_id = 2)
-    if circuit1 and circuit2:
+    circuit2 = client_2.connect_to_tor_network(circuit_id = 1)
+
+    client_1.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "alpha", circuit_id=1)
+    client_2.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "alpha", circuit_id=1)
+    client_1.destroy_circuit(1)
+    client_2.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "alpha", circuit_id=1)
+    circuit1 = client_1.connect_to_tor_network(circuit_id = 1)
+    client_1.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "alpha", circuit_id=1)
+
+    #circuit2 = client_2.connect_to_tor_network(circuit_id = 2)
+    """if circuit1 and circuit2:
         client_1.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "alpha", circuit_id=1)
         client_2.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "alpha", circuit_id=2)
         done = client_1.destroy_circuit(1)
         if done:
-            client_2.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "alpha", circuit_id=2)
+            client_2.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "alpha", circuit_id=2)"""
 
 
 

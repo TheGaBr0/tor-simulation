@@ -12,11 +12,8 @@ import logging
 import socket
 from TorMessage import *
 import json
-import base64
 import pickle
-import threading
-import ipaddress
-from RoutingEntry import RoutingEntry
+from collections import defaultdict
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
@@ -28,10 +25,6 @@ class Client:
         self.running =        False
 
         self.len_of_circuit = None
-
-        self.guard_chosen = None
-        self.relays_chosen = None
-        self.exit_chosen = None
    
         self.nodes = []
         self.handshake_enstablished = False
@@ -44,11 +37,21 @@ class Client:
         self.persistent_connections: Dict[str, socket.socket] = {}
         self.server_stream_circuit_map: Dict[str, (int, int)] = {} #Dict[socket.socket, (int, int)] = {} -> nella realtà per applicazioni
 
+        self.circuits = defaultdict(list)
         self.circuit_relays_map: Dict[int, List[int]] = defaultdict(list)
         
         self.logger = logging.getLogger(f"Client-{self.id}")
 
-    def determine_route(self):
+    def get_guard(self, circuit_id):
+        return self.circuits.get(circuit_id)[0]
+    
+    def get_relays(self, circuit_id):
+        return self.circuits.get(circuit_id)[1:-1]
+    
+    def get_exit(self, circuit_id):
+        return self.circuits.get(circuit_id)[-1]
+
+    def determine_route(self, circuit_id):
         self.logger.info("Richiedendo i nodi al directory server")
         
         if not self._send_request_to_directory("127.0.0.1", 9000, self._craft_request_directory_server()):
@@ -59,15 +62,16 @@ class Client:
 
         circuit = self.build_circuit()
 
-        self.guard_chosen = circuit[0]
-        self.relays_chosen = circuit[1:-1]  # All middle nodes
-        self.exit_chosen = circuit[-1]
+        self.circuits[circuit_id].append(circuit[0])
+        for relay in circuit[1:-1]:
+            self.circuits[circuit_id].append(relay)
+        self.circuits[circuit_id].append(circuit[-1])
 
         for node in circuit:
             node.start()
         
-        relay_info = '\n - '.join([str(relay) for relay in self.relays_chosen])
-        self.logger.info(f"Percorso scelto: \n - {self.guard_chosen}\n - {relay_info}\n - {self.exit_chosen}")
+        relay_info = '\n - '.join([str(relay) for relay in self.get_relays(circuit_id)])
+        self.logger.info(f"Percorso scelto: \n - {self.get_guard(circuit_id)}\n - {relay_info}\n - {self.get_exit(circuit_id)}")
 
 
     def establish_circuit(self, circuit_id):
@@ -90,18 +94,18 @@ class Client:
     
 
     def _handshake_guard(self, circuit_id):
-        x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.guard_chosen.pub)
+        x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.get_guard(circuit_id).pub)
         self.g_x1, self.x1 = g_x1, x1
         
         create_cell = TorCell(circid=circuit_id, cmd=TorCommands.CREATE, data=encode_payload([g_x1_bytes_encrypted]))
         
-        success = self._send_request("127.0.0.1", self.guard_chosen.port, create_cell.to_bytes())
+        success = self._send_request("127.0.0.1", self.get_guard(circuit_id).port, create_cell.to_bytes())
         self.logger.info("Handshake con guard " + ("completato" if success else "fallito"))
         return success
 
     def _handshake_relay(self, circuit_id):
 
-        for i, node in enumerate(self.relays_chosen):
+        for i, node in enumerate(self.get_relays(circuit_id)):
             x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(node.pub)
             self.g_x1, self.x1 = g_x1, x1
             
@@ -121,7 +125,7 @@ class Client:
             relay_cell = TorCell(circid=circuit_id, cmd=TorCommands.RELAY, relay=relay, 
                             streamid=streamid, digest=digest, data=payload)
             
-            success = self._send_request("127.0.0.1", self.guard_chosen.port, relay_cell.to_bytes())
+            success = self._send_request("127.0.0.1", self.get_guard(circuit_id).port, relay_cell.to_bytes())
 
             if not success:
                 return success
@@ -131,10 +135,10 @@ class Client:
         return success
 
     def _handshake_exit(self, circuit_id):
-        x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.exit_chosen.pub)
+        x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.get_exit(circuit_id).pub)
         self.g_x1, self.x1 = g_x1, x1
         
-        payload = encode_payload([g_x1_bytes_encrypted, data_to_bytes(self.exit_chosen.port), data_to_bytes(self.exit_chosen.ip)])
+        payload = encode_payload([g_x1_bytes_encrypted, data_to_bytes(self.get_exit(circuit_id).port), data_to_bytes(self.get_exit(circuit_id).ip)])
         
         relay = RelayCommands.EXTEND
         streamid = data_to_bytes(0)
@@ -150,16 +154,20 @@ class Client:
         relay_cell = TorCell(circid=circuit_id, cmd=TorCommands.RELAY, relay=relay, 
                             streamid=streamid, digest=digest, data=payload)
         
-        success = self._send_request("127.0.0.1", self.guard_chosen.port, relay_cell.to_bytes())
+        success = self._send_request("127.0.0.1", self.get_guard(circuit_id).port, relay_cell.to_bytes())
         self.logger.info("Handshake con exit " + ("completato" if success else "fallito"))
 
         return success
 
     def connect_to_tor_network(self, circuit_id, len_of_circuit = 3):
+
+        if circuit_id in self.circuits:
+            self.logger.warning(f"Circuit id {circuit_id} già usato")
+            return
         
         self.len_of_circuit = len_of_circuit
 
-        self.determine_route()
+        self.determine_route(circuit_id)
         
         self.handshake_enstablished = self.establish_circuit(circuit_id)
         return self.handshake_enstablished
@@ -169,7 +177,7 @@ class Client:
         self.logger.info(f"Destroying circuit {circuit_id}...")
 
         destroy_cell = TorCell(circid=circuit_id, cmd=TorCommands.DESTROY, data=b'null')
-        sock = self.persistent_connections.get(f"127.0.0.1:{self.guard_chosen.port}")
+        sock = self.persistent_connections.get(f"127.0.0.1:{self.get_guard(circuit_id).port}")
 
         if not sock:
             self.logger.warning(f"No connection found for circuit {circuit_id}")
@@ -187,7 +195,7 @@ class Client:
         for key in keys_to_remove:
             self.server_stream_circuit_map.pop(key)
 
-        self.circuit_relays_map.pop(circuit_id, None)
+        self.circuit_relays_map.pop(circuit_id)
 
         # Check if any other circuits are using the same guard connection
         other_circuits_using_guard = [
@@ -197,23 +205,29 @@ class Client:
 
         # Only close the connection if no other circuits are using it
         if not other_circuits_using_guard:
-            self.persistent_connections.pop(f"127.0.0.1:{self.guard_chosen.port}", None)
+            self.persistent_connections.pop(f"127.0.0.1:{self.get_guard(circuit_id).port}", None)
             sock.close()
             self.logger.info(f"Closed connection to guard (no other circuits using it)")
         else:
             self.logger.info(f"Keeping connection to guard (other circuits: {other_circuits_using_guard})")
 
+        self.circuits.pop(circuit_id)
+
         self.logger.info(f"Circuit {circuit_id} destroyed")
         return True
 
     def send_message_to_tor_network(self, server_ip: str, server_port: int, payload: str, circuit_id: int):
-        
+
+        if circuit_id not in self.circuits:
+            self.logger.info(f"Circuit id {circuit_id} mancante")
+            return
+
         self.logger.info("Connessione con server...")
         success = self.enstablish_connection_with_server(server_ip, server_port, circuit_id)
 
         if(success):
             self.logger.info("Connessione con server avvenuta con successo, invio dati")
-            self.send_message_to_server(server_ip, server_port, payload)
+            self.send_message_to_server(server_ip, server_port, payload, circuit_id)
 
     def enstablish_connection_with_server(self, server_ip: str, server_port: int, circuit_id: int) -> bool:
         
@@ -238,14 +252,14 @@ class Client:
         relay_cell = TorCell(circid=circuit_id, cmd=TorCommands.RELAY, relay=relay, 
                         streamid=streamid, digest=digest, data=payload)
         
-        success = self._send_request("127.0.0.1", self.guard_chosen.port, relay_cell.to_bytes())
+        success = self._send_request("127.0.0.1", self.get_guard(circuit_id).port, relay_cell.to_bytes())
         
         if success:
             self.logger.info("Connessione al server stabilita con successo")
 
         return success
     
-    def send_message_to_server(self, server_ip: str, server_port: int, payload: str) -> bytes:
+    def send_message_to_server(self, server_ip: str, server_port: int, payload: str, circuit_id: int) -> bytes:
         payload = encode_payload([data_to_bytes(payload)])
 
         circid, streamid = self.server_stream_circuit_map.get(f"{server_ip}:{server_port}")
@@ -265,7 +279,7 @@ class Client:
                             streamid=streamid, digest=digest, data=payload)
         
         
-        success = self._send_request("127.0.0.1", self.guard_chosen.port, relay_cell.to_bytes())
+        success = self._send_request("127.0.0.1", self.get_guard(circuit_id).port, relay_cell.to_bytes())
 
 
     def _craft_request_directory_server(self):
@@ -494,11 +508,13 @@ class Client:
         
         # Step 1: Choose guard
 
-        if not self.guard_chosen:
-            guard = self._choose_from_top5(self.nodes, "guard")
+        if self.circuits:
+            first_key = next(iter(self.circuits))
+            guard = self.get_guard(first_key)
         else:
-            guard = self.guard_chosen
-
+            guard = self._choose_from_top5(self.nodes, "guard")
+        
+        #guard = [n for n in self.nodes if n.type == "guard"][0]
         circuit.append(guard)
         used_owners.add(guard.owner)
         used_subnets.add(self._get_16_subnet(guard.ip))
@@ -520,6 +536,7 @@ class Client:
             
             # Select best relay
             relay = self._select_best_node(available_relays)
+            #relay = [n for n in self.nodes if n.type == "relay"][0]
             circuit.append(relay)
             used_owners.add(relay.owner)
             used_subnets.add(self._get_16_subnet(relay.ip))
@@ -536,6 +553,8 @@ class Client:
             raise ValueError("No available exits for circuit")
         
         exit_node = self._select_best_node(available_exits)
+        #exit_node = [n for n in self.nodes if n.type == "exit"][0]
+
         circuit.append(exit_node)
         
         return circuit

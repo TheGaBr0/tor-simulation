@@ -28,14 +28,14 @@ class ConnectionWorker(QObject):
         self.circuit_id = circuit_id
         self.color = color
 
-    def connect(self):
+    def connect(self, circuit_id):
         """Run connection in background thread"""
         if self.client.connect_to_tor_network(circuit_id=self.circuit_id):
             path = [
                 self.client.id,
-                self.client.guard_chosen.id,
-                *[r.id for r in self.client.relays_chosen],
-                self.client.exit_chosen.id
+                self.client.get_guard(circuit_id).id,
+                *[r.id for r in self.client.get_relays(circuit_id)],
+                self.client.get_exit(circuit_id).id
             ]
             print(f"Connection established for {self.client.id}: {path}")
             self.connection_ready.emit(path, self.color)
@@ -235,8 +235,11 @@ class EntityConnectionManager:
         worker.connection_ready.connect(on_connected)
 
         self.workers.append(worker)
-        threading.Thread(target=worker.connect, daemon=True).start()
-
+        threading.Thread(
+            target=worker.connect,
+            args=(circuit_id,),  
+            daemon=True
+        ).start()
 
     def destroy_client_circuit(self, client_id, circuit_id):
         if client_id not in self.clients:
@@ -607,13 +610,9 @@ def main():
         
         for client in clients:
             try:
-                if client.guard_chosen:
-                    client.guard_chosen.stop()
-                if client.relays_chosen:
-                    for node in client.relays_chosen:
+                for key in list(client.circuits.keys()):
+                    for node in client.circuits.get(key):
                         node.stop()
-                if client.exit_chosen:
-                    client.exit_chosen.stop()
             except (AttributeError, Exception):
                 pass
         

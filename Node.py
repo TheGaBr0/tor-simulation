@@ -131,11 +131,38 @@ class Node:
             if client_id in self.persistent_connections:
                 del self.persistent_connections[client_id]
             try:
-                client_socket.shutdown(socket.SHUT_RDWR)
                 client_socket.close()
                 self.logger.info(f"Connessione chiusa con {client_id}")
             except Exception as e:
                 self.logger.debug(f"Errore chiusura connessione con {client_id}: {e}")
+
+    def remove_circuit(self, routing_entry):
+        affected_sockets = set()
+
+        # Record sockets involved with entry
+        src_ip, src_port = routing_entry.get_source_coords()
+        dst_ip, dst_port = routing_entry.get_dest_coords()
+
+        if src_ip and src_port:
+            affected_sockets.add(f"{src_ip}:{src_port}")
+        if dst_ip and dst_port:
+            affected_sockets.add(f"{dst_ip}:{dst_port}")
+
+        self.routing_table.remove(routing_entry)
+
+        # Step 3: For each affected socket, check if it's still used elsewhere
+        for sock_id in affected_sockets:
+            still_used = any(
+                sock_id in (
+                    f"{e.get_source_coords()[0]}:{e.get_source_coords()[1]}",
+                    f"{e.get_dest_coords()[0]}:{e.get_dest_coords()[1]}"
+                )
+                for e in self.routing_table
+            )
+            if not still_used and sock_id in self.persistent_connections:
+                sock = self.persistent_connections.pop(sock_id)
+                sock.shutdown(socket.SHUT_RDWR)
+                self.logger.info(f"Closed and removed socket {sock_id}")
 
     def _process_message(self, data, ip, port, direction):
         try:
@@ -158,32 +185,21 @@ class Node:
                 )
 
                 if self.type != "exit":
-
-                    for entry in self.routing_table:
-                        self.logger.info(entry)
-
-                    self.logger.info(self.persistent_connections)
-
                     self.logger.info(f"Destroying circuit {routing_entry.get_in_circ_id()}-{routing_entry.get_out_circ_id()}...")
 
                     destroy_cell = TorCell(circid=routing_entry.get_out_circ_id(), cmd=TorCommands.DESTROY, data=b'null')
                     forward_sock = self.persistent_connections.get(f"127.0.0.1:{routing_entry.get_dest_coords()[1]}")
                     forward_sock.send(destroy_cell.to_bytes())
 
-                    self.routing_table.remove(routing_entry)
+                    self.remove_circuit(routing_entry)
 
                     self.logger.info("Destroyed...")
-
-                    for entry in self.routing_table:
-                        self.logger.info(entry)
-
-                    self.logger.info(self.persistent_connections)
 
 
                 else:
                     self.logger.info(f"Destroying circuit {routing_entry.get_out_circ_id()}")
-                    
-                    self.routing_table.remove(routing_entry)
+
+                    self.remove_circuit(routing_entry)
                     
                     # Collect keys to remove
                     keys_to_remove = [
