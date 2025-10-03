@@ -108,7 +108,6 @@ class DirectoryServer:
     def _handle_answer(self, client_socket_reply: socket, addr: str):
         """Gestisce una connessione"""
         client_id = f"{addr[0]}:{addr[1]}"
-        self.logger.info(f"Nuova connessione da {client_id}")
         
         try:
             # Set timeout for client socket
@@ -125,7 +124,6 @@ class DirectoryServer:
 
             match payload.get("cmd"):
                 case "RETRIEVE":
-                    self.logger.info(f"Richiesta RETRIEVE ricevuta")
                     response_data = self.create_nodes_packet()
                     client_socket_reply.sendall(response_data)
 
@@ -151,8 +149,7 @@ class DirectoryServer:
         first_port = 20000
         # create guards
         for i in range(num_guards):
-            compromised = random.random() < compromise_fraction
-
+            compromised =True
             new_node = Node(f'G{i}', 'guard', compromise=compromised, ip_address=self._random_ipv4(),
                             band_width=self._random_band_width(), owner=self._random_owner(), port=first_port)
 
@@ -160,8 +157,7 @@ class DirectoryServer:
             first_port+=1
         # relays
         for i in range(num_relays):
-            compromised = random.random() < compromise_fraction
-
+            compromised =True
             new_node = Node(f'R{i}', 'relay', compromise=compromised, ip_address=self._random_ipv4(),
                             band_width=self._random_band_width(), owner=self._random_owner(), port=first_port)
 
@@ -169,7 +165,7 @@ class DirectoryServer:
             first_port+=1
         # exits
         for i in range(num_exits):
-            compromised = random.random() < compromise_fraction
+            compromised =True
 
             new_node = Node(f'E{i}', 'exit', compromise=compromised, ip_address=self._random_ipv4(),
                             band_width=self._random_band_width(), owner=self._random_owner(), port=first_port)
@@ -185,6 +181,7 @@ class DirectoryServer:
         Returns:
             bytes: Pickled bytes containing all network nodes
         """
+
         # Collect all nodes into a single list
         nodes = self.guards + self.relays + self.exits
 

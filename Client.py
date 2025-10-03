@@ -22,7 +22,7 @@ class Client:
         self.id = id
         self.ip = ip
         self.choice_algorithm = choice_algorithm
-        self.running =        False
+        self.running =False
 
         self.len_of_circuit = None
    
@@ -254,8 +254,6 @@ class Client:
         
         success = self._send_request("127.0.0.1", self.get_guard(circuit_id).port, relay_cell.to_bytes())
         
-        if success:
-            self.logger.info("Connessione al server stabilita con successo")
 
         return success
     
@@ -314,7 +312,6 @@ class Client:
             
             # AGGIUNTA: salva la nuova connessione per riutilizzo
             self.persistent_connections[destination_key] = sock
-            self.logger.info(f"Connected to {server_ip}:{server_port}")
             
             sock.sendall(payload)
             response_data = sock.recv(1000000)
@@ -334,10 +331,9 @@ class Client:
         try:
             # Create new socket connection
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(10.0)
+            sock.settimeout(20.0)
             sock.connect((server_ip, server_port))
             
-            self.logger.info(f"Connected to {server_ip}:{server_port}")
             
             # Send payload
             sock.sendall(payload)
@@ -383,13 +379,11 @@ class Client:
                 cell = TorCell.from_bytes(data)
             except ValueError:
                 # RETRIEVED response
-                self.logger.info("Risposta RETRIEVED ricevuta")
                 packet = pickle.loads(data)
                 self.nodes = packet.get("nodes", [])
                 return True
 
             if cell.cmd == TorCommands.CREATED:
-                self.logger.info("Risposta CREATED ricevuta")
                 decoded_payload = decode_payload(cell.data, 2)
                 g_y1_bytes, H_K1_toCheck = decoded_payload[0], decoded_payload[1]
                 
@@ -401,7 +395,6 @@ class Client:
                 return H_K1_toCheck == H_K1
             
             if cell.cmd == TorCommands.RELAY:
-                self.logger.info("Cella RELAY ricevuta")
                 relay, streamid, digest, data = cell.relay_command, cell.streamid, cell.digest, cell.data
                 
 
@@ -433,14 +426,11 @@ class Client:
                 
                 match relay:
                     case RelayCommands.CONNECTED:
-                        self.logger.info("Cella RELAY CONNECTED identificata")
                         return True
                     case RelayCommands.END:
-                        self.logger.info("Cella RELAY END identificata")
                         return False
 
                     case RelayCommands.DATA:
-                        self.logger.info("Cella RELAY DATA identificata")
                         self.logger.info(decode_payload(data,1)[0].decode('utf-8'))
                         self.logger.info(f"streamid: {int.from_bytes(streamid)} id: {int.from_bytes(cell.circid)}")
                         return True

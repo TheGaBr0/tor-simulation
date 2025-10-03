@@ -10,6 +10,8 @@ from ClientTerminalWidget import TerminalWidget
 from NodeTerminalWidget import NodeTerminal
 from ServerTerminalWindow import ServerTerminal
 import random
+import time
+from tor_security_sim import SecurityTest
 
 def random_ipv4() -> str:
     """Return a random IPv4 address."""
@@ -436,8 +438,15 @@ class EntityConnectionManager:
         return circuit_info.get('path', [])
 
 def main():
-    # Initialize servers
-    dir_server = DirectoryServer(random_ipv4(), 9000)
+    dir_server= DirectoryServer(random_ipv4(),9000)
+    interesting_nodes=[]
+    temp_nodes=[]
+    compromission_rate=100
+    
+
+    dir_server.start()
+    i=0
+
     provider_server_1 = Server("S1", random_ipv4(), 21000)
     provider_server_2 = Server("S2", random_ipv4(), 27000)
 

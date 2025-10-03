@@ -110,7 +110,6 @@ class Server:
     def _handle_client(self, client_socket: socket.socket, addr):
         """Gestisce una connessione client"""
         client_id = f"{addr[0]}:{addr[1]}"
-        self.logger.info(f"Nuova connessione da {client_id}")
         
         try:
             
@@ -119,8 +118,6 @@ class Server:
                 data = client_socket.recv(4096)
                 if not data:
                     break
-
-                self.logger.info(f"Ricevuta richiesta da {client_id}")
 
                 response = self._process_message(data)
 
