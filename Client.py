@@ -437,11 +437,11 @@ class Client:
         
         # Step 1: Choose guard
 
-        if not self.guard_chosen:
-            guard = self._choose_from_top3(self.nodes, "guard")
-        else:
-            guard = self.guard_chosen
-
+        #if not self.guard_chosen:
+        #    guard = self._choose_from_top5(self.nodes, "guard")
+        #else:
+        #    guard = self.guard_chosen
+        guard = [n for n in self.nodes if n.type == "guard"][0]
         circuit.append(guard)
         used_owners.add(guard.owner)
         used_subnets.add(self._get_16_subnet(guard.ip))
@@ -462,7 +462,8 @@ class Client:
                 raise ValueError(f"No available relays for position {i+2} in circuit")
             
             # Select best relay
-            relay = self._select_best_node(available_relays)
+            #relay = self._select_best_node(available_relays)
+            relay = [n for n in self.nodes if n.type == "relay"][0]
             circuit.append(relay)
             used_owners.add(relay.owner)
             used_subnets.add(self._get_16_subnet(relay.ip))
@@ -478,7 +479,9 @@ class Client:
         if not available_exits:
             raise ValueError("No available exits for circuit")
         
-        exit_node = self._select_best_node(available_exits)
+        #exit_node = self._select_best_node(available_exits)
+        exit_node = [n for n in self.nodes if n.type == "exit"][0]
+
         circuit.append(exit_node)
         
         return circuit

@@ -30,6 +30,8 @@ class Node:
         self.port = port
         self.server_socket: Optional[socket.socket] = None
         self.running = False
+        self.cnt=0
+        self.first=True
 
         self.routing_table: List[RoutingEntry] = []
         self.persistent_connections: Dict[str, socket.socket] = {}
@@ -117,6 +119,8 @@ class Node:
         try:
             while self.running:  # MODIFICA: loop per mantenere connessione aperta
                 data = client_socket.recv(4096)
+                if(self.compromised):
+                        self.compromised_log()
                 
                 if not data:
                     self.logger.info(f"Client {client_id} ha chiuso la connessione")
@@ -125,8 +129,6 @@ class Node:
                 response_data = self._process_message(data, addr[0], addr[1], "forward")
 
                 if response_data:
-                    if(self.compromised):
-                        self.compromised_log()
 
                     client_socket.sendall(response_data)
 
@@ -148,8 +150,7 @@ class Node:
                 self.logger.debug(f"Errore chiusura connessione con {client_id}: {e}")
 
     def compromised_log(self):
-                   self.logger.info(f"timestamp trasmissione messaggio {time.time()}")
-                   self.timing_data.append(time.time())
+        self.timing_data.append(time.time())
 
     def _process_message(self, data, ip, port, direction):
         try:
@@ -178,9 +179,38 @@ class Node:
                                                self.allocate_circ_id_for_outgoing(int.from_bytes(cell.circid)+1), K)
         self.routing_table.append(new_routing_entry)
 
+        if not self.first:
+              self.cnt+=1
+              self.incr=0
+        self.first=True
+
         created_cell = TorCell(circid=new_routing_entry.get_in_circ_id(), cmd=TorCommands.CREATED,
                               data=encode_payload([data_to_bytes(g_y1), H_K]))
         return created_cell.to_bytes()
+    
+
+    def flood_circuit(self, ip, port, n=90, delay=None):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((ip, port))    # usa ip passato alla funzione
+        try:
+            for i in range(n):
+                # genera un payload DH valido come fai altrove
+                x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.pub)
+                create_cell = TorCell(circid=(99).to_bytes(2, 'big'),
+                                    cmd=TorCommands.CREATE,
+                                    data=encode_payload([g_x1_bytes_encrypted]))
+                sock.sendall(create_cell.to_bytes())
+
+                if delay:
+                    time.sleep(delay)
+        finally:
+            sock.close()
+
+               
+           
+               
+              
+         
 
     def _handle_created(self, cell,ip, port):
         
@@ -264,6 +294,8 @@ class Node:
                         
                 dst_socket.send(payload_decrypted)  
                 response_data = dst_socket.recv(1000000)
+                if(self.compromised):
+                        self.compromised_log()
                 if response_data:
                     # Encrypt the response for backward transmission
                     relay_encrypted, _ = aes_ctr_encrypt(RelayCommands.DATA, K, "backward")
@@ -291,8 +323,12 @@ class Node:
         port = int.from_bytes(port_bytes)
         
         ip_str = str(ipaddress.IPv4Address(ip_bytes))
+        if(self.compromised):
+                        self.compromised_log()
 
         response = self._forward_message("127.0.0.1", port, encode_payload([data_to_bytes("test")]))
+        if(self.compromised):
+                        self.compromised_log()
 
         K = routing_entry.get_session_key()
                 
@@ -335,8 +371,11 @@ class Node:
         
         create_cell = TorCell(circid=routing_entry.get_out_circ_id(), cmd=TorCommands.CREATE,
                              data=encode_payload([g_x1_bytes_encrypted]))
-        
+        if(self.compromised):
+                        self.compromised_log()
         response_data = self._forward_message("127.0.0.1", port, create_cell.to_bytes())
+        if(self.compromised):
+                        self.compromised_log()
         return self._process_message(response_data, src_ip, src_port, "forward") if response_data else None
 
     def _forward_relay(self, routing_entry, relay_decrypted, streamid_decrypted, digest_decrypted, payload_decrypted, src_ip, src_port):
@@ -352,8 +391,11 @@ class Node:
                                      time.time(),routing_entry.in_circ_id,(src_ip,src_port),routing_entry.out_circ_id,routing_entry.dest_coords,
                                 ]
                                 self.circuit_building_compromisation.append(new_entry)
-        
+        if(self.compromised):
+                        self.compromised_log()
         response_data = self._forward_message("127.0.0.1", routing_entry.get_dest_coords()[1], relay_cell.to_bytes())
+        if(self.compromised):
+                        self.compromised_log()
         return self._process_message(response_data, src_ip, src_port, "backward") if response_data else None
 
     def _forward_message(self, destination_ip: str, port: int, data):
@@ -366,6 +408,8 @@ class Node:
                 if(self.compromised):
                         self.compromised_log()
                 sock.send(data)
+                if(self.compromised):
+                        self.compromised_log()
                 response_data = sock.recv(1000000)
                 return response_data if response_data else None
             except Exception as e:
@@ -382,8 +426,10 @@ class Node:
 
             self.persistent_connections[destination_key] = sock
             if(self.compromised):
-                        self.compromised_log()
+                       self.compromised_log()
             sock.send(data)
+            if(self.compromised):
+                        self.compromised_log()
             response_data = sock.recv(1000000)
             return response_data if response_data else None
         except Exception as e:

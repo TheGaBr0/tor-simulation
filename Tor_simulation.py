@@ -19,6 +19,7 @@ def random_ipv4() -> str:
 def main():
     dir_server= DirectoryServer(random_ipv4(),9000)
     interesting_nodes=[]
+    temp_nodes=[]
     compromission_rate=100
     
 
@@ -32,30 +33,52 @@ def main():
     provider_server_2.start()
 
     client_1 = Client("C1", random_ipv4(), 22000, 22001)
-    #client_2 = Client("C2", random_ipv4(), 43000, 43001)
+    client_2 = Client("C2", random_ipv4(), 43000, 43001)
+    client_3= Client("C3",random_ipv4(), 43001, 43002)
 
 
    
 
     if client_1.connect_to_tor_network(circuit_id = 1):
         for node in client_1.nodes:
-            if node.compromised:
+            if node.compromised and node.running:
                 interesting_nodes.append(node)
-        sim = SecurityTest(interesting_nodes,compromission_rate)
-        sim.network_analysis()
-        #sim.correlation_attack()
         while i<4:
             client_1.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "alpha", circuit_id=1)
             i=i+1
+        i=0
+
+
+    if client_2.connect_to_tor_network(circuit_id = 1):
+        for node in client_2.nodes:
+            if node.compromised and node.running:
+                interesting_nodes.append(node)
+        
+        while i<4:
+            client_2.send_message_to_tor_network(provider_server_2.ip, provider_server_2.port, "beta", circuit_id=1)
+            i=i+1
+
+        i=0
+    if client_3.connect_to_tor_network(circuit_id = 3):
+        for node in client_3.nodes:
+            if node.compromised and node.running:
+                interesting_nodes.append(node)
+        
+        while i<4:
+            client_3.send_message_to_tor_network(provider_server_1.ip, provider_server_1.port, "beta", circuit_id=3)
+            i=i+1
+
+        for node in interesting_nodes:
+           print(node.id)
+                
+        sim = SecurityTest(interesting_nodes,compromission_rate)
+        sim.network_analysis()
+        sim.correlation_attack()
         sim.circuit_building_attack()
-
-       
-
-    #if client_2.connect_to_tor_network(circuit_id = 1):
-    #   client_2.send_message_to_tor_network(provider_server_2.ip, provider_server_2.port, "beta", circuit_id=1)
-    #   for node in client_1.nodes:
-    #        if node.running:
-    #            interesting_nodes.append(node)
+        node_source="E0"
+        ip="127.0.0.1"
+        port=sim.circuits_Explored[1][5][1]
+        sim.cellFlood_attack(node_source,ip,port)
 
 
     try:
@@ -68,8 +91,16 @@ def main():
             node.stop()
 
         client_1.exit_chosen.stop()
+        client_2.guard_chosen.stop()
+        
+        for node in client_2.relays_chosen:
+            node.stop()
+
+        client_2.exit_chosen.stop()
+
 
         provider_server_1.stop()
+        provider_server_2.stop()
         dir_server.stop()
 
         print("Simulazione terminata")

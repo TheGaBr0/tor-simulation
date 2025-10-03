@@ -1,7 +1,9 @@
 import random
 import statistics
 import time
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
+import socket
+from Node import *
 # from Node import *   # keep your Node class import as you had it
 
 class SecurityTest:
@@ -10,10 +12,12 @@ class SecurityTest:
         self.compromision_rate = compromision_rate
         self.compromised_nodes: List[str] = []
         self.circuits_created: List[Dict] = []   # start empty list
+        self.circuits_Explored: List[List[
+            Tuple[str, float, int, Tuple[str, int], int, Tuple[str, int]]
+            ]] =[]
 
         # Data collection structures for attacks
         self.timing_data: Dict[str, List[float]] = {}   # node_id -> [timestamps]
-        self.packet_sizes: Dict[str, List[int]] = {}    # node_id -> [packet sizes]
 
     def compromise(self):
          for node in self.nodes:
@@ -90,15 +94,16 @@ class SecurityTest:
         relay_nodes=[]
         relay_nodes_compromised=[]
         for node in self.nodes:
+                self.timing_data[getattr(node, 'id', node)] = []
+
+        for node in self.nodes:
             if node.compromised:
                 self.compromised_nodes.append(getattr(node, 'id', node))
                 # Initialize data structures for this compromised node
-                self.timing_data[getattr(node, 'id', node)] = []
-                self.packet_sizes[getattr(node, 'id', node)] = []
 
 
             if node.compromised:
-                   self.timing_data[node.id]=node.timing_data
+                       self.timing_data[node.id]=self.timing_data[node.id]+node.timing_data
             else: 
                     self.timing_data[node.id]=None
 
@@ -108,12 +113,15 @@ class SecurityTest:
                relay_nodes.append(node)
                relay_nodes_compromised.append(node.compromised)
             elif node.type=="exit":
-                temp["middle_list"]=relay_nodes
+                temp["middle_list"]=relay_nodes.copy()
                 temp["exit"]=node
-                temp["middle_compromised_list"]=relay_nodes_compromised
+                temp["middle_compromised_list"]=relay_nodes_compromised.copy()
                 temp["exit_compromised"]=node.compromised
                 self.circuits_created.append(temp)
                 circid=circid+1
+                relay_nodes.clear()
+                relay_nodes_compromised.clear()
+               
 
 
 
@@ -244,16 +252,32 @@ class SecurityTest:
             ex = vulnerable_circuits[0]
             print(f"\n  Example vulnerable circuit:")
             print(f"    Circuit {ex['circuit_id']}: {ex['original_guard']} -> ... -> {ex['original_exit']}")
-            print(f"    Used guard replacement? {ex['used_guard_replacement']}, used exit replacement? {ex['used_exit_replacement']}")
-            print(f"    Effective mapping: {ex['guard']} -> ... -> {ex['exit']}")
             print(f"    Correlation: {ex['correlation_score']}")
 
         return result
     
     def circuit_building_attack(self):
-          for node in self.nodes:
-            if node.compromised and node.running:
-                print(node.circuit_building_compromisation)
+        i=0
+        for node in self.nodes:
+            if i<len(self.timing_data):
+                if node.compromised and node.running:
+                    print(node.circuit_building_compromisation)
+                    i+=1
+            for entry in node.circuit_building_compromisation:
+                if entry not in self.circuits_Explored:
+                    self.circuits_Explored.append(entry)
+
+
+    def cellFlood_attack(self,node,ip,port):
+        for nd in self.nodes:
+              if node==nd.id and nd.compromised:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.connect((ip,port))
+                while 1:
+                    x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(nd.pub)
+                    create_cell = TorCell(circid=99, cmd=TorCommands.CREATE, data=encode_payload([g_x1_bytes_encrypted]))
+                    sock.sendall(create_cell.to_bytes())
+        
 
 
 
