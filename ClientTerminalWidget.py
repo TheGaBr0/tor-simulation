@@ -201,18 +201,25 @@ class TerminalWidget(QWidget):
                 self.append_log("ERROR: No manager linked to client")
         
         elif cmd == "status":
-            client_info = getattr(self.client, "manager", None)
-            if client_info is None:
-                self.append_log("ERROR: No manager linked to client")
-                return
-            self.append_log("Client circuits status:")
-            client_data = self.client.manager.clients.get(self.client_id, {})
-            circuits = client_data.get('circuits', {})
+            self.append_log("PORCODIO")
+            circuits = getattr(self.client, "circuits", {})
             if not circuits:
-                self.append_log("  No circuits registered")
-            for cid, info in circuits.items():
-                status = "connected" if info['connected'] else "not connected"
-                self.append_log(f"  Circuit {cid}: {status}")
+                self.append_log("No circuits registered for this client")
+                return
+
+            self.append_log("Client circuits status:")
+
+            for cid, node_list in circuits.items():
+                if not node_list:
+                    self.append_log(f"  Circuit {cid}: empty")
+                    continue
+
+                # Derive node IDs from objects
+                node_ids = [getattr(node, "id", str(node)) for node in node_list]
+                # Determine if circuit is connected (heuristic: first and last nodes exist)
+                status = "connected" if len(node_ids) > 1 else "not connected"
+                self.append_log(f"  Circuit {cid}: {status} -> Path: {node_ids}")
+
         
         elif cmd == "clear":
             self.output.clear()
