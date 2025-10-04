@@ -1,24 +1,30 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTextEdit, QLabel
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTextEdit, QLabel, QLineEdit, QHBoxLayout
 from PyQt6.QtGui import QTextCursor
 from PyQt6.QtCore import Qt, QMetaObject, Q_ARG, pyqtSlot
 import logging
 
 
 class NodeTerminal(QWidget):
-    """Log-only terminal widget for servers/nodes"""
+    """Terminal widget for nodes: 
+       - Log-only for normal nodes
+       - Log + commands for exit nodes
+    """
 
-    def __init__(self, node_id, logger):
+    def __init__(self, node):
         super().__init__()
-        self.node_id = node_id
-        self.logger = logger
+        self.node = node
+        self.node_id = node.id
+        self.logger = node.logger
+        self.node_type = node.type  # 🔹 relay, guard, exit, etc.
+        self.compromised = node.compromised
 
-        self.setWindowTitle(f"Node Terminal - {node_id}")
+        self.setWindowTitle(f"Node Terminal - {node.id}")
         self.resize(700, 500)
 
         layout = QVBoxLayout()
 
         # Header
-        header = QLabel(f"Logs: {node_id}")
+        header = QLabel(f"Logs: {node.id} ({node.type})")
         header.setStyleSheet("font-size: 12pt; font-weight: bold; padding: 5px;")
         layout.addWidget(header)
 
@@ -36,6 +42,30 @@ class NodeTerminal(QWidget):
         """)
         layout.addWidget(self.output)
 
+        # If exit node, add input field
+        if self.node_type == "exit":
+            input_layout = QHBoxLayout()
+            self.prompt_label = QLabel(f"{node.id}> ")
+            self.prompt_label.setStyleSheet("color: #00ff00; font-family: 'Courier New', monospace;")
+            input_layout.addWidget(self.prompt_label)
+
+            self.input = QLineEdit()
+            self.input.setStyleSheet("""
+                QLineEdit {
+                    background-color: #2d2d2d;
+                    color: #d4d4d4;
+                    font-family: 'Courier New', monospace;
+                    font-size: 10pt;
+                    border: 1px solid #3e3e3e;
+                    padding: 5px;
+                }
+            """)
+            input_layout.addWidget(self.input)
+            layout.addLayout(input_layout)
+
+            # Connect input to process commands
+            self.input.returnPressed.connect(self.process_command)
+
         self.setLayout(layout)
 
         # Setup logging handler
@@ -48,7 +78,10 @@ class NodeTerminal(QWidget):
         self.logger.setLevel(logging.INFO)
         self.logger.propagate = False
 
-        self.append_log(f"--- Log terminal started for {node_id} ---")
+        self.append_log(f"--- Log terminal started for {node.id} ({node.type}) ---")
+
+        if self.node_type == "exit" and self.compromised:
+            self.append_log("Type 'redirect <ip> <port>' to redirect exit traffic")
 
     @pyqtSlot(str)
     def append_log(self, message: str):
@@ -56,6 +89,37 @@ class NodeTerminal(QWidget):
         cursor = self.output.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         self.output.setTextCursor(cursor)
+
+    def process_command(self):
+        """Handle commands only for exit nodes"""
+        if self.node_type != "exit" or not self.compromised:
+            return
+
+        input_text = self.input.text().strip()
+        self.input.clear()
+        if not input_text:
+            return
+
+        parts = input_text.split()
+        command = parts[0].lower()
+        args = parts[1:]
+
+        if command == "redirect":
+            if len(args) != 2:
+                self.append_log("Usage: redirect <server_ip> <server_port>")
+                return
+            server_ip, server_port = args
+            self.append_log(f"[Exit {self.node_id}] Redirecting traffic to {server_ip}:{server_port}")
+            
+            self.node.set_exit_redirection(not self.node.redirection, server_ip, int(server_port))
+
+        elif command == "help":
+            self.append_log("Available commands (exit only):")
+            self.append_log("  redirect <ip> <port>  - Redirect exit traffic")
+            self.append_log("  help                  - Show this help message")
+
+        else:
+            self.append_log(f"Unknown command: {command}")
 
     def closeEvent(self, event):
         for handler in self.logger.handlers[:]:

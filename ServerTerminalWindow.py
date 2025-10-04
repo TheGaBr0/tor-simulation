@@ -6,18 +6,21 @@ import logging
 class ServerTerminal(QWidget):
     """Log terminal widget for servers"""
 
-    def __init__(self, server_id, logger):
+    def __init__(self, logger, server):
         super().__init__()
-        self.server_id = server_id
-        self.logger = logger
+        self.server_id = server.id
+        self.logger = server.logger
+        self.compromised = server.compromised
+        self.server_ip = server.ip
+        self.server_port = server.port
 
-        self.setWindowTitle(f"Server Terminal - {server_id}")
+        self.setWindowTitle(f"Server Terminal - {server.id}")
         self.resize(700, 500)
 
         layout = QVBoxLayout()
 
         # Header
-        header = QLabel(f"Server Logs: {server_id}")
+        header = QLabel(f"Server Logs: {server.id}")
         header.setStyleSheet("font-size: 12pt; font-weight: bold; padding: 5px;")
         layout.addWidget(header)
 
@@ -47,7 +50,14 @@ class ServerTerminal(QWidget):
         self.logger.setLevel(logging.INFO)
         self.logger.propagate = False
 
-        self.append_log(f"--- Server terminal started for {server_id} ---")
+        
+        self.append_log(f"--- Server terminal started for {server.id} ---")
+
+        if not self.compromised:
+            self.append_log(f"To send a message to this server -> send {server.ip} {server.port} alpha 1")
+        else:
+            self.append_log(f"To redirect traffic to this server -> redirect {server.ip} {server.port}")
+
 
     @pyqtSlot(str)
     def append_log(self, message: str):

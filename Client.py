@@ -12,13 +12,12 @@ import logging
 import socket
 from TorMessage import *
 import json
-import pickle
 from collections import defaultdict
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 class Client:
-    def __init__(self, id: str, ip: str, port: int, listen_port: int, choice_algorithm='default'):
+    def __init__(self, id: str, ip: str, port: int, listen_port: int, nodes, choice_algorithm='default'):
         self.id = id
         self.ip = ip
         self.choice_algorithm = choice_algorithm
@@ -26,7 +25,7 @@ class Client:
 
         self.len_of_circuit = None
    
-        self.nodes = []
+        self.nodes = nodes
         self.handshake_enstablished = False
         
         self.bind_ip = "127.0.0.1"
@@ -52,13 +51,8 @@ class Client:
         return self.circuits.get(circuit_id)[-1]
 
     def determine_route(self, circuit_id):
-        self.logger.info("Richiedendo i nodi al directory server")
-        
-        if not self._send_request_to_directory("127.0.0.1", 9000, self._craft_request_directory_server()):
-            self.logger.info("Ricezione nodi fallita, abort.")
-            return
-            
-        self.logger.info(f"Nodi ricevuti, determinando il percorso di {self.len_of_circuit} nodi...")
+     
+        self.logger.info(f"Determinando il percorso di {self.len_of_circuit} nodi...")
 
         circuit = self.build_circuit()
 
@@ -222,8 +216,6 @@ class Client:
             self.logger.info(f"Circuit id {circuit_id} mancante")
             return
 
-        print(self.server_stream_circuit_map)
-
         if not self.server_stream_circuit_map or self.server_stream_circuit_map.get(f"{server_ip}:{server_port}")[0] != circuit_id:
             self.logger.info("Connessione con server...")
             success = self.enstablish_connection_with_server(server_ip, server_port, circuit_id)
@@ -286,10 +278,6 @@ class Client:
         
         success = self._send_request("127.0.0.1", self.get_guard(circuit_id).port, relay_cell.to_bytes())
 
-
-    def _craft_request_directory_server(self):
-        return json.dumps({"id": self.id, "cmd": "RETRIEVE"}).encode('utf-8')
-
     def _send_request(self, server_ip: str, server_port: int, payload: bytes) -> bool:
         destination_key = f"{server_ip}:{server_port}"
         
@@ -334,40 +322,6 @@ class Client:
             self.logger.error(f"Error in _send_request: {e}")
         return False
     
-    def _send_request_to_directory(self, server_ip: str, server_port: int, payload: bytes) -> bool:
-        try:
-            # Create new socket connection
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(20.0)
-            sock.connect((server_ip, server_port))
-            
-            
-            # Send payload
-            sock.sendall(payload)
-            
-            # Receive all data in chunks
-            response_data = b''
-            while True:
-                chunk = sock.recv(8192)
-                if not chunk:
-                    break
-                response_data += chunk
-            
-            # Close socket
-            sock.close()
-            
-            if response_data:
-                return self._process_message(response_data)
-            else:
-                self.logger.warning("No response received from server")
-                return False
-                
-        except socket.timeout:
-            self.logger.error("Request timeout")
-            return False
-        except Exception as e:
-            self.logger.error(f"Error in _send_request: {e}")
-            return False
     
     def close_connections(self):
         """Chiude tutte le connessioni persistenti"""
@@ -382,13 +336,9 @@ class Client:
 
     def _process_message(self, data: bytes) -> bool:
         try:
-            try:
-                cell = TorCell.from_bytes(data)
-            except ValueError:
-                # RETRIEVED response
-                packet = pickle.loads(data)
-                self.nodes = packet.get("nodes", [])
-                return True
+
+            cell = TorCell.from_bytes(data)
+            
 
             if cell.cmd == TorCommands.CREATED:
                 decoded_payload = decode_payload(cell.data, 2)

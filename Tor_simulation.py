@@ -12,6 +12,7 @@ from ServerTerminalWindow import ServerTerminal
 import random
 import time
 from tor_security_sim import SecurityTest
+import pickle
 
 def random_ipv4() -> str:
     """Return a random IPv4 address."""
@@ -142,15 +143,19 @@ class EntityConnectionManager:
 
         # Terminal for client
         if client_id not in self.terminals:
-            terminal = TerminalWidget(client_id, client)
+            terminal = TerminalWidget(client_id, client, manager=self, editor=self.editor)
             self.terminals[client_id] = terminal
 
         client.manager = self
 
-    def register_node(self, node_id, node):
-        """Register server/relay/guard/exit node with log terminal"""
-        terminal = NodeTerminal(node_id, node.logger)
-        self.terminals[node_id] = terminal
+    def register_node(self, node):
+        """Register server/relay/guard/exit node with log terminal.
+        node_type: 'guard', 'relay', 'exit', etc. If 'exit', the NodeTerminal
+        will allow commands (e.g. redirect).
+        """
+        terminal = NodeTerminal(node)
+        self.terminals[node.id] = terminal
+       
 
     def register_server(self, server_id, server):
         self.servers[server_id] = {
@@ -158,11 +163,10 @@ class EntityConnectionManager:
             'server_id': server_id,
         }
 
-        terminal = ServerTerminal(server_id, server.logger)
+        terminal = ServerTerminal(server_id, server)
         self.terminals[server_id] = terminal
         self.servers[server_id]['server'].manager = self
 
-        terminal.append_log(f"To send a message to this server -> send {server.ip} {server.port} alpha 1")
     
     def on_client_click(self, client_id):
         """Handle client node click - show terminal"""
@@ -457,12 +461,12 @@ class EntityConnectionManager:
 
 def main():
     dir_server= DirectoryServer(random_ipv4(),9000)
+
+    nodes = dir_server.guards+dir_server.relays+dir_server.exits
+
     interesting_nodes=[]
     sim=SecurityTest()
 
-    
-
-    dir_server.start()
     i=0
 
     provider_server_1 = Server("S1", random_ipv4(), 21000, compromised=False)
@@ -470,11 +474,10 @@ def main():
     attacker_server = Server("S3", random_ipv4(), 28000, compromised=True)
 
     # Initialize clients
-    client_1 = Client("C1", random_ipv4(), 22000, 22001)
-    client_2 = Client("C2", random_ipv4(), 43000, 43001)
+    client_1 = Client("C1", random_ipv4(), 22000, 22001,nodes)
+    client_2 = Client("C2", random_ipv4(), 43000, 43001, nodes)
 
     # Start servers in background threads
-    threading.Thread(target=dir_server.start, daemon=True).start()
     threading.Thread(target=provider_server_1.start, daemon=True).start()
     threading.Thread(target=provider_server_2.start, daemon=True).start()
     threading.Thread(target=attacker_server.start, daemon=True).start()
@@ -523,145 +526,18 @@ def main():
     editor.set_node_clickable('C2', manager.on_client_click)
 
     for guard in dir_server.guards:
-        manager.register_node(guard.id, guard)
+        manager.register_node(guard)
         editor.set_node_clickable(guard.id, manager.on_node_click)
 
     for relay in dir_server.relays:
-        manager.register_node(relay.id, relay)
+        manager.register_node(relay)
         editor.set_node_clickable(relay.id, manager.on_node_click)
 
-    for exit_node in dir_server.exits:
-        manager.register_node(exit_node.id, exit_node)
-        editor.set_node_clickable(exit_node.id, manager.on_node_click)
+    for exit in dir_server.exits:
+        manager.register_node(exit)
+        editor.set_node_clickable(exit.id, manager.on_node_click)
     
-    def setup_terminal_connect(client_id):
-        """Enhance terminal to support all commands dynamically"""
-        terminal = manager.terminals[client_id]
 
-        def enhanced_process():
-            input_text = terminal.input.text().strip()
-            terminal.input.clear()
-            if not input_text:
-                return
-
-            parts = input_text.split()
-            command = parts[0].lower()
-            args = parts[1:]
-
-            if command == "connect":
-                if len(args) != 1:
-                    terminal.append_log("Usage: connect <circuit_id>")
-                    return
-                try:
-                    circuit_id = int(args[0])
-                except ValueError:
-                    terminal.append_log("ERROR: Circuit ID must be an integer")
-                    return
-
-                # Add circuit dynamically if missing
-                if circuit_id not in manager.clients[client_id]['circuits']:
-                    manager.add_circuit(client_id, circuit_id)
-
-                # Schedule connection
-                terminal.append_log(f"Scheduling connection for circuit {circuit_id}...")
-                QTimer.singleShot(
-                    100,
-                    lambda cid=client_id, circ=circuit_id: manager.connect_client(cid, circ)
-                )
-
-            elif command == "destroy":
-                if len(args) != 1:
-                    terminal.append_log("Usage: destroy <circuit_id>")
-                    return
-                try:
-                    circuit_id = int(args[0])
-                except ValueError:
-                    terminal.append_log("ERROR: Circuit ID must be an integer")
-                    return
-
-                if circuit_id not in terminal.client.circuits:
-                    terminal.append_log(f"Circuit {circuit_id} not found")
-                    return
-
-                terminal.append_log(f"Destroying circuit {circuit_id}...")
-                QTimer.singleShot(
-                    100,
-                    lambda cid=client_id, circ=circuit_id: manager.destroy_client_circuit(cid, circ)
-                )
-
-            elif command == "send":
-                if len(args) < 4:
-                    terminal.append_log("Usage: send <server_ip> <server_port> <message> <circuit_id>")
-                    return
-                server_ip = args[0]
-                try:
-                    server_port = int(args[1])
-                    circuit_id = int(args[-1])
-                except ValueError:
-                    terminal.append_log("ERROR: Port and circuit_id must be integers")
-                    return
-                payload = " ".join(args[2:-1])
-
-                # Ensure circuit exists
-                if circuit_id not in terminal.client.circuits:
-                    manager.add_circuit(client_id, circuit_id)
-                    
-                interesting_nodes.clear() 
-                for node in manager.clients.get(client_id).get("client").circuits.get(circuit_id):
-                    interesting_nodes.append(node)
-                
-                
-                manager.send_message(client_id, server_ip, server_port, payload, circuit_id)
-                sim.network_analysis(interesting_nodes,circuit_id)
-                sim.correlation_attack()
-                sim.circuit_building_attack()
-                terminal.append_log(f"Sending '{payload}' to {server_ip}:{server_port} via circuit {circuit_id}")
-
-            elif command == "status":
-                circuits = getattr(terminal.client, "circuits", {})
-                if not circuits:
-                    terminal.append_log("No circuits registered for this client")
-                    return
-
-                terminal.append_log("Client circuits status:")
-                for cid, node_list in circuits.items():
-                    if not node_list:
-                        terminal.append_log(f"  Circuit {cid}: empty")
-                        continue
-                    node_ids = [getattr(node, "id", str(node)) for node in node_list]
-                    status = "connected" if len(node_ids) > 1 else "not connected"
-                    terminal.append_log(f"  Circuit {cid}: {status} -> Path: {node_ids}")
-
-            elif command == "clear":
-                terminal.output.clear()
-                terminal.append_log(f"Terminal initialized for {client_id}")
-                terminal.append_log("Type 'connect <circuit_id>' to establish Tor connection")
-                terminal.append_log("Type 'help' for available commands")
-
-            elif command == "help":
-                terminal.append_log("Available commands:")
-                terminal.append_log("  connect <circuit_id>                 - Establish connection to Tor network")
-                terminal.append_log("  destroy <circuit_id>                 - Destroy a circuit")
-                terminal.append_log("  send <ip> <port> <msg> <circuit_id> - Send message via circuit")
-                terminal.append_log("  status                               - Show circuits and paths")
-                terminal.append_log("  clear                                - Clear terminal output")
-                terminal.append_log("  help                                 - Show this help message")
-
-            else:
-                terminal.append_log(f"Unknown command: {command}")
-
-        # Replace terminal's process_command
-        terminal.process_command = enhanced_process
-        try:
-            terminal.input.returnPressed.disconnect()
-        except Exception:
-            pass
-        terminal.input.returnPressed.connect(terminal.process_command)
-
-
-    # Setup terminals for all clients dynamically
-    for client_id in manager.clients.keys():
-        setup_terminal_connect(client_id)
 
     # Graceful shutdown when GUI closes
     def cleanup():

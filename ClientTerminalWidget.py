@@ -28,16 +28,17 @@ class TerminalWidget(QWidget):
     """Terminal widget for displaying client logs and accepting commands"""
     log_signal = pyqtSignal(str)
     
-    def __init__(self, client_id, client, editor=None):
+    def __init__(self, client_id, client, manager=None, editor=None):
         super().__init__()
         self.client_id = client_id
         self.client = client
-        self.editor = editor   # 🔹 nuovo riferimento all’editor grafico
+        self.manager = manager   # 🔹 now holds reference to EntityConnectionManager
+        self.editor = editor
         
         self.setWindowTitle(f"Terminal - {client_id}")
         self.resize(800, 600)
         
-        # UI setup
+        # --- UI setup (unchanged) ---
         layout = QVBoxLayout()
         
         header = QLabel(f"Client Terminal: {client_id}")
@@ -73,7 +74,6 @@ class TerminalWidget(QWidget):
                 padding: 5px;
             }
         """)
-        self.input.returnPressed.connect(self.process_command)
         input_layout.addWidget(self.input)
         
         layout.addLayout(input_layout)
@@ -87,6 +87,9 @@ class TerminalWidget(QWidget):
         self.client.logger.addHandler(handler)
         self.client.logger.setLevel(logging.INFO)
         self.client.logger.propagate = False
+        
+        # Connect input
+        self.input.returnPressed.connect(self.process_command)
         
         # Initial messages
         self.append_log(f"Terminal initialized for {client_id}")
@@ -102,145 +105,95 @@ class TerminalWidget(QWidget):
         self.output.setTextCursor(cursor)
     
     def process_command(self):
-        """Process user input command"""
+        """Parse and execute a terminal command"""
         input_text = self.input.text().strip()
         self.input.clear()
-        
         if not input_text:
             return
-        
-        self.append_log(f"{self.client_id}> {input_text}")
+
         parts = input_text.split()
-        cmd = parts[0].lower()
-        
-        if cmd == "connect":
-            if len(parts) != 2:
+        command = parts[0].lower()
+        args = parts[1:]
+
+        if command == "connect":
+            if len(args) != 1:
                 self.append_log("Usage: connect <circuit_id>")
                 return
-            
             try:
-                circuit_id = int(parts[1])
-            except ValueError:
-                self.append_log("ERROR: circuit_id must be an integer")
-                return
-            
-            if not hasattr(self.client, "manager"):
-                self.append_log("ERROR: Client not linked to a manager")
-                return
-            
-            client_info = self.client.manager.clients.get(self.client_id)
-            if not client_info:
-                self.append_log(f"Client {self.client_id} not registered in manager")
-                return
-            
-            # Add circuit dynamically if missing
-            if circuit_id not in client_info['circuits']:
-                self.client.manager.add_circuit(self.client_id, circuit_id)
-            
-            circuit_info = client_info['circuits'][circuit_id]
-            if circuit_info['connected']:
-                self.append_log(f"Circuit {circuit_id} is already connected")
-                return
-            
-            self.append_log(f"Scheduling connection for circuit {circuit_id}...")
-            QTimer.singleShot(
-                100, 
-                lambda cid=self.client_id, circ=circuit_id: self.client.manager.connect_client(cid, circ)
-            )
-            
-            # 🔹 Disegna graficamente il circuito se definito
-            if self.editor and circuit_id in self.client.circuits:
-                self.editor.draw_circuit(circuit_id, color="#27ae60")
-                self.append_log(f"Circuit {circuit_id} drawn in network view")
-
-        elif cmd == "destroy":
-            if len(parts) != 2:
-                self.append_log("Usage: destroy <circuit_id>")
-                return
-            try:
-                circuit_id = int(parts[1])
+                circuit_id = int(args[0])
             except ValueError:
                 self.append_log("ERROR: Circuit ID must be an integer")
                 return
+            if circuit_id not in self.manager.clients[self.client_id]['circuits']:
+                self.manager.add_circuit(self.client_id, circuit_id)
+            self.append_log(f"Connecting circuit {circuit_id}...")
+            QTimer.singleShot(100, lambda: self.manager.connect_client(self.client_id, circuit_id))
 
-            if not hasattr(self.client, "manager"):
-                self.append_log("ERROR: Client not linked to a manager")
+        elif command == "destroy":
+            if len(args) != 1:
+                self.append_log("Usage: destroy <circuit_id>")
                 return
-
-            self.append_log(f"Scheduling destruction of circuit {circuit_id}...")
-            QTimer.singleShot(
-                100,
-                lambda cid=self.client_id, circ=circuit_id: 
-                    self.client.manager.destroy_client_circuit(cid, circ)
-            )
-            
-            # 🔹 Rimuovi graficamente il circuito
-            if self.editor:
-                self.editor.remove_circuit(circuit_id)
-                self.append_log(f"Circuit {circuit_id} removed from network view")
-        
-        elif cmd == "send":
-            if len(parts) < 5:
-                self.append_log("Usage: send <ip> <port> <message> <circuit_id>")
-                return
-            server_ip = parts[1]
             try:
-                server_port = int(parts[2])
-                circuit_id = int(parts[-1])
-                payload = " ".join(parts[3:-1])
+                circuit_id = int(args[0])
             except ValueError:
-                self.append_log("ERROR: port and circuit_id must be integers")
+                self.append_log("ERROR: Circuit ID must be an integer")
                 return
-            
-            if hasattr(self.client, "manager"):
-                self.client.manager.send_message(
-                    self.client_id, server_ip, server_port, payload, circuit_id
-                )
-                self.append_log(f"Sending '{payload}' to {server_ip}:{server_port} via circuit {circuit_id}")
-            else:
-                self.append_log("ERROR: No manager linked to client")
-        
-        elif cmd == "status":
-            self.append_log("PORCODIO")
+            self.append_log(f"Destroying circuit {circuit_id}...")
+            QTimer.singleShot(100, lambda: self.manager.destroy_client_circuit(self.client_id, circuit_id))
+
+        elif command == "send":
+            if len(args) < 4:
+                self.append_log("Usage: send <server_ip> <server_port> <message> <circuit_id>")
+                return
+            server_ip = args[0]
+            try:
+                server_port = int(args[1])
+                circuit_id = int(args[-1])
+            except ValueError:
+                self.append_log("ERROR: Port and circuit_id must be integers")
+                return
+            payload = " ".join(args[2:-1])
+            if circuit_id not in self.client.circuits:
+                self.manager.add_circuit(self.client_id, circuit_id)
+            self.manager.send_message(self.client_id, server_ip, server_port, payload, circuit_id)
+            self.append_log(f"Sending '{payload}' to {server_ip}:{server_port} via circuit {circuit_id}")
+
+        elif command == "status":
             circuits = getattr(self.client, "circuits", {})
             if not circuits:
                 self.append_log("No circuits registered for this client")
                 return
-
             self.append_log("Client circuits status:")
-
             for cid, node_list in circuits.items():
                 if not node_list:
                     self.append_log(f"  Circuit {cid}: empty")
                     continue
-
-                # Derive node IDs from objects
                 node_ids = [getattr(node, "id", str(node)) for node in node_list]
-                # Determine if circuit is connected (heuristic: first and last nodes exist)
                 status = "connected" if len(node_ids) > 1 else "not connected"
                 self.append_log(f"  Circuit {cid}: {status} -> Path: {node_ids}")
 
-        
-        elif cmd == "clear":
+        elif command == "clear":
             self.output.clear()
             self.append_log(f"Terminal initialized for {self.client_id}")
             self.append_log("Type 'connect <circuit_id>' to establish Tor connection")
             self.append_log("Type 'help' for available commands")
-        
-        elif cmd == "help":
+
+        elif command == "help":
             self.append_log("Available commands:")
-            self.append_log("  connect <circuit_id>       - Establish connection to Tor network")
+            self.append_log("  connect <circuit_id>                 - Establish connection to Tor network")
+            self.append_log("  destroy <circuit_id>                 - Destroy a circuit")
             self.append_log("  send <ip> <port> <msg> <circuit_id> - Send message via circuit")
-            self.append_log("  status                     - Show connection status")
-            self.append_log("  clear                      - Clear terminal output")
-            self.append_log("  help                       - Show this help message")
-        
+            self.append_log("  status                               - Show circuits and paths")
+            self.append_log("  clear                                - Clear terminal output")
+            self.append_log("  help                                 - Show this help message")
+
         else:
-            self.append_log(f"Unknown command: {cmd}")
-    
+            self.append_log(f"Unknown command: {command}")
+
     def closeEvent(self, event):
         """Clean up logging handler when terminal closes"""
         for handler in self.client.logger.handlers[:]:
             if isinstance(handler, TerminalHandler):
                 self.client.logger.removeHandler(handler)
         event.accept()
+
