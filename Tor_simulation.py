@@ -142,15 +142,19 @@ class EntityConnectionManager:
 
         # Terminal for client
         if client_id not in self.terminals:
-            terminal = TerminalWidget(client_id, client)
+            terminal = TerminalWidget(client_id, client, manager=self, editor=self.editor)
             self.terminals[client_id] = terminal
 
         client.manager = self
 
-    def register_node(self, node_id, node):
-        """Register server/relay/guard/exit node with log terminal"""
-        terminal = NodeTerminal(node_id, node.logger)
-        self.terminals[node_id] = terminal
+    def register_node(self, node):
+        """Register server/relay/guard/exit node with log terminal.
+        node_type: 'guard', 'relay', 'exit', etc. If 'exit', the NodeTerminal
+        will allow commands (e.g. redirect).
+        """
+        terminal = NodeTerminal(node)
+        self.terminals[node.id] = terminal
+       
 
     def register_server(self, server_id, server):
         self.servers[server_id] = {
@@ -158,11 +162,10 @@ class EntityConnectionManager:
             'server_id': server_id,
         }
 
-        terminal = ServerTerminal(server_id, server.logger)
+        terminal = ServerTerminal(server_id, server)
         self.terminals[server_id] = terminal
         self.servers[server_id]['server'].manager = self
 
-        terminal.append_log(f"To send a message to this server -> send {server.ip} {server.port} alpha 1")
     
     def on_client_click(self, client_id):
         """Handle client node click - show terminal"""
@@ -457,10 +460,12 @@ class EntityConnectionManager:
 
 def main():
     dir_server= DirectoryServer(random_ipv4(),9000)
-    interesting_nodes=[]
-    
 
-    dir_server.start()
+    nodes = dir_server.guards+dir_server.relays+dir_server.exits
+
+    interesting_nodes=[]
+    sim=SecurityTest()
+
     i=0
 
     provider_server_1 = Server("S1", random_ipv4(), 21000, compromised=False)
@@ -468,11 +473,10 @@ def main():
     attacker_server = Server("S3", random_ipv4(), 28000, compromised=True)
 
     # Initialize clients
-    client_1 = Client("C1", random_ipv4(), 22000, 22001)
-    client_2 = Client("C2", random_ipv4(), 43000, 43001)
+    client_1 = Client("C1", random_ipv4(), 22000, 22001,nodes)
+    client_2 = Client("C2", random_ipv4(), 43000, 43001, nodes)
 
     # Start servers in background threads
-    threading.Thread(target=dir_server.start, daemon=True).start()
     threading.Thread(target=provider_server_1.start, daemon=True).start()
     threading.Thread(target=provider_server_2.start, daemon=True).start()
     threading.Thread(target=attacker_server.start, daemon=True).start()
@@ -521,16 +525,16 @@ def main():
     editor.set_node_clickable('C2', manager.on_client_click)
 
     for guard in dir_server.guards:
-        manager.register_node(guard.id, guard)
+        manager.register_node(guard)
         editor.set_node_clickable(guard.id, manager.on_node_click)
 
     for relay in dir_server.relays:
-        manager.register_node(relay.id, relay)
+        manager.register_node(relay)
         editor.set_node_clickable(relay.id, manager.on_node_click)
 
-    for exit_node in dir_server.exits:
-        manager.register_node(exit_node.id, exit_node)
-        editor.set_node_clickable(exit_node.id, manager.on_node_click)
+    for exit in dir_server.exits:
+        manager.register_node(exit)
+        editor.set_node_clickable(exit.id, manager.on_node_click)
     
     def setup_terminal_connect(client_id):
         """Enhance terminal to support all commands dynamically"""
