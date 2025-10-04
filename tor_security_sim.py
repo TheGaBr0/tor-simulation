@@ -7,17 +7,14 @@ from Node import *
 # from Node import *   # keep your Node class import as you had it
 
 class SecurityTest:
-    def __init__(self, nodes: List, compromision_rate: int):
-        self.nodes = nodes
-        self.compromision_rate = compromision_rate
+    def __init__(self):
+        self.nodes = []
+        self.compromision_rate = []
         self.compromised_nodes: List[str] = []
         self.circuits_created: List[Dict] = []   # start empty list
         self.circuits_Explored: List[List[
             Tuple[str, float, int, Tuple[str, int], int, Tuple[str, int]]
             ]] =[]
-
-        # Data collection structures for attacks
-        self.timing_data: Dict[str, List[float]] = {}   # node_id -> [timestamps]
 
     def compromise(self):
          for node in self.nodes:
@@ -27,16 +24,22 @@ class SecurityTest:
     def create_circuit(self,
                        circuit_id: str,
                        guard,
-                       middle_list: Optional[List] = None,
-                       exit_node = None,
-                       guard_comp: bool = False,
-                       middle_list_comp: Optional[List[bool]] = None,
-                       exit_comp: bool = False) -> Dict:
+                       times_guard:  Optional[List],
+                       middle_list: Optional[List],
+                       times_List: Optional[List[List]],
+                       exit_node,
+                       times_exit: Optional[List],
+                       guard_comp: bool,
+                       middle_list_comp: Optional[List[bool]],
+                       exit_comp: bool,
+                       analyzed:bool
+                       ) -> Dict:
       
         middle_list = middle_list or []
         # default compromised flags to False for each middle node if not provided
-        if middle_list_comp is None:
+        if middle_list_comp is None and times_List is None:
             middle_list_comp = [False] * len(middle_list)
+            times_List=[None] * len(middle_list)
 
         if len(middle_list_comp) != len(middle_list):
             raise ValueError("middle_list_comp must have same length as middle_list")
@@ -44,11 +47,15 @@ class SecurityTest:
         circuit = {
             'circuit_id': circuit_id,
             'guard': guard,
+            "times_guard": times_guard,
             'middle_list': middle_list,
+            'times_List':times_List,
             'exit': exit_node,
+            'times_exit':times_exit,
             'guard_compromised': bool(guard_comp),
             'middle_compromised_list': middle_list_comp,
-            'exit_compromised': bool(exit_comp)
+            'exit_compromised': bool(exit_comp),
+            'analyzed': analyzed
         }
         return circuit
 
@@ -85,48 +92,51 @@ class SecurityTest:
         return list(self.circuits_created)
 
 
-    def network_analysis(self):
+    def network_analysis(self, nodes: List,circ_id):
         """Analyze the network and randomly compromise nodes based on compromision_rate.
            Initializes timing/packet data for compromised nodes.
         """
+        self.nodes=nodes
         self.compromised_nodes = []
-        circid=0
         relay_nodes=[]
         relay_nodes_compromised=[]
-        for node in self.nodes:
-                self.timing_data[getattr(node, 'id', node)] = []
+        relay_nodes_times=[[]]
 
         for node in self.nodes:
             if node.compromised:
                 self.compromised_nodes.append(getattr(node, 'id', node))
                 # Initialize data structures for this compromised node
 
-
-            if node.compromised:
-                       self.timing_data[node.id]=self.timing_data[node.id]+node.timing_data
-            else: 
-                    self.timing_data[node.id]=None
-
             if node.type=="guard":
-                temp=self.create_circuit(circid,node,None,None,node.compromised,None,False)
+                if node.compromised:
+                     temp=self.create_circuit(
+                                circ_id,
+                                node,
+                                node.timing_data,
+                                None,
+                                None,
+                                None,
+                                None,
+                                node.compromised,
+                                None,
+                                None,
+                                False)
             elif node.type=="relay":
                relay_nodes.append(node)
                relay_nodes_compromised.append(node.compromised)
+               relay_nodes_times.append(node.timing_data)
             elif node.type=="exit":
                 temp["middle_list"]=relay_nodes.copy()
+                temp['times_List']=relay_nodes_times.copy()
                 temp["exit"]=node
+                temp['times_exit']=node.timing_data
                 temp["middle_compromised_list"]=relay_nodes_compromised.copy()
                 temp["exit_compromised"]=node.compromised
                 self.circuits_created.append(temp)
-                circid=circid+1
                 relay_nodes.clear()
                 relay_nodes_compromised.clear()
+                relay_nodes_times.clear()
                
-
-
-
-        # Example: optionally create some circuits from current guards (not required).
-        # Y ou can call build_random_circuit externally as needed.
 
         print(
             f"Network Status:\n"
@@ -136,12 +146,8 @@ class SecurityTest:
         )
 
 
-    def correlation_attack(self) -> Dict:
-        """Detect circuits where both guard and exit (or replacements) are compromised.
-        If guard or exit are not compromised/available, use the first compromised
-        middle as guard replacement and the last compromised middle as exit replacement.
-        """
-        print("\n=== ATTACK 1: End-to-End Correlation Attack (with middle-node fallbacks) ===")
+    def correlation_attack(self):
+        print("\n=== ATTACK 1: End-to-End Correlation Attack (with middle-node fallbacks using circuit times) ===")
 
         vulnerable_circuits = []
         correlation_scores = []
@@ -151,12 +157,21 @@ class SecurityTest:
             if node_or_id is None:
                 return None
             return getattr(node_or_id, "id", node_or_id)
+        
+        def print_circuit_info(circuit):
+            for entry in circuit: 
+                print(f"{entry}:{circuit.get(entry)}")
+               
 
         for circuit in self.circuits_created:
-            # skip invalid/empty entries
+            #if  circuit.get("analyzed"):
+            #    print_circuit_info(circuit)
+            #    continue
             if not isinstance(circuit, dict):
+                print("Skipping non-dict circuit entry.")
                 continue
 
+            circuit_id = circuit.get('circuit_id', '<no-id>')
             guard_comp = circuit.get('guard_compromised', False)
             exit_comp = circuit.get('exit_compromised', False)
 
@@ -166,106 +181,141 @@ class SecurityTest:
             guard_id = get_node_id(guard)
             exit_id = get_node_id(exit_node)
 
+            times_guard = circuit.get('times_guard')
+            times_exit = circuit.get('times_exit')
+            times_List = circuit.get('times_List') or []
+
             middle_list = circuit.get('middle_list') or []
             middle_comp_flags = circuit.get('middle_compromised_list') or []
 
-            # Helper: find first compromised middle (closest to guard/top),
-            # and last compromised middle (closest to exit/bottom)
-            first_comp_middle_id = None
-            last_comp_middle_id = None
+            first_comp_middle_idx = None
+            last_comp_middle_idx = None
 
-            # Ensure lengths match - if not, derive compromise from flags if possible
             for i, m in enumerate(middle_list):
-                mid_id = get_node_id(m)
                 flag = False
                 if i < len(middle_comp_flags):
                     flag = bool(middle_comp_flags[i])
-                # If flags don't exist, also check global compromised list or node attribute:
-                if not flag:
-                    # try to check node attribute if it is an object and has .compromised
-                    if hasattr(m, 'compromised'):
-                        flag = bool(getattr(m, 'compromised', False))
-                    else:
-                        # fallback: check if mid_id appears in global compromised_nodes list
-                        flag = mid_id in getattr(self, "compromised_nodes", [])
+                if not flag and hasattr(m, 'compromised'):
+                    flag = bool(getattr(m, 'compromised', False))
+                elif not flag:
+                    mid_id = get_node_id(m)
+                    flag = mid_id in getattr(self, "compromised_nodes", [])
 
                 if flag:
-                    if first_comp_middle_id is None:
-                        first_comp_middle_id = mid_id
-                    last_comp_middle_id = mid_id
+                    if first_comp_middle_idx is None:
+                        first_comp_middle_idx = i
+                    last_comp_middle_idx = i
 
-            # Choose effective guard/exit IDs:
-            effective_guard_id = guard_id if guard_comp and guard_id is not None else first_comp_middle_id
-            effective_exit_id = exit_id if exit_comp and exit_id is not None else last_comp_middle_id
+            effective_guard_id = guard_id if guard_comp and guard_id is not None else (
+                get_node_id(middle_list[first_comp_middle_idx]) if first_comp_middle_idx is not None else None
+            )
+            effective_exit_id = exit_id if exit_comp and exit_id is not None else (
+                get_node_id(middle_list[last_comp_middle_idx]) if last_comp_middle_idx is not None else None
+            )
 
-            # If still missing one side, skip this circuit
+            def pick_times_for_guard():
+                if guard_comp and times_guard:
+                    return times_guard, 'times_guard'
+                if first_comp_middle_idx is not None and first_comp_middle_idx < len(times_List):
+                    candidate = times_List[first_comp_middle_idx]
+                    if candidate:
+                        return candidate, f'times_List[{first_comp_middle_idx}]'
+                return self.timing_data.get(effective_guard_id, []), 'timing_data'
+
+            def pick_times_for_exit():
+                if exit_comp and times_exit:
+                    return times_exit, 'times_exit'
+                if last_comp_middle_idx is not None and last_comp_middle_idx < len(times_List):
+                    candidate = times_List[last_comp_middle_idx]
+                    if candidate:
+                        return candidate, f'times_List[{last_comp_middle_idx}]'
+                return self.timing_data.get(effective_exit_id, []), 'timing_data'
+
+            print("\n--- Circuit:", circuit_id, "---")
+            print(f"  original_guard: {guard_id!s} (compromised={guard_comp})")
+            print(f"  original_exit : {exit_id!s} (compromised={exit_comp})")
+            print(f"  effective_guard: {effective_guard_id!s} (used_replacement={effective_guard_id != guard_id})")
+            print(f"  effective_exit : {effective_exit_id!s} (used_replacement={effective_exit_id != exit_id})")
+
             if effective_guard_id is None or effective_exit_id is None:
+                print("  SKIPPED: missing effective guard or exit (no compromised nodes available for either side).")
                 continue
 
-            # Pull timing traces (lists of timestamps) from self.timing_data
-            guard_times = self.timing_data.get(effective_guard_id, [])
-            exit_times = self.timing_data.get(effective_exit_id, [])
+            guard_times, guard_times_source = pick_times_for_guard()
+            exit_times, exit_times_source = pick_times_for_exit()
 
-            # require at least two timestamps on each side to compute deltas
-            if len(guard_times) >= 2 and len(exit_times) >= 2:
+            guard_times = guard_times or []
+            exit_times = exit_times or []
+
+            def fmt_times_info(times, source):
+                if not times:
+                    return f"{source} -> empty"
+                try:
+                    return f"{source} -> n={len(times)}, first={times[0]}, last={times[-1]}"
+                except Exception:
+                    return f"{source} -> n={len(times)} (non-indexable contents)"
+
+            print("  guard_times source/info:", fmt_times_info(guard_times, guard_times_source))
+            print("  exit_times  source/info:", fmt_times_info(exit_times, exit_times_source))
+
+            if len(guard_times) < 2 or len(exit_times) < 2:
+                print("  SKIPPED: insufficient timestamps (need >=2 on both sides).")
+                continue
+
+            try:
                 guard_deltas = [guard_times[i+1] - guard_times[i] for i in range(len(guard_times)-1)]
                 exit_deltas = [exit_times[i+1] - exit_times[i] for i in range(len(exit_times)-1)]
+            except Exception as e:
+                print(f"  ERROR computing deltas: {e}")
+                continue
 
-                if guard_deltas and exit_deltas:
-                    # Simple similarity metric: 1 - clipped absolute diff of means
-                    mean_diff = abs(statistics.mean(guard_deltas) - statistics.mean(exit_deltas))
-                    correlation = 1 - min(mean_diff, 1.0)   # maps diff 0 -> 1, diff>=1 -> 0
-                    correlation = max(0.0, min(1.0, correlation))
+            if not guard_deltas or not exit_deltas:
+                print("  SKIPPED: empty deltas after computation.")
+                continue
 
-                    correlation_scores.append(correlation)
-                    vulnerable_circuits.append({
-                        'circuit_id': circuit.get('circuit_id'),
-                        'guard': effective_guard_id,
-                        'exit': effective_exit_id,
-                        'original_guard': guard_id,
-                        'original_exit': exit_id,
-                        'used_guard_replacement': (effective_guard_id != guard_id),
-                        'used_exit_replacement': (effective_exit_id != exit_id),
-                        'correlation_score': f"{correlation:.3f}",
-                        'severity': 'CRITICAL' if correlation > 0.8 else ('HIGH' if correlation > 0.5 else 'MEDIUM')
-                    })
+            mean_guard = statistics.mean(guard_deltas)
+            mean_exit = statistics.mean(exit_deltas)
+            mean_diff = abs(mean_guard - mean_exit)
+            correlation = 1 - (mean_diff / max(mean_guard, mean_exit))
+            correlation = max(0.0, min(1.0, correlation))
+
+            severity = 'CRITICAL' if correlation > 0.8 else ('HIGH' if correlation > 0.5 else 'MEDIUM')
+
+            correlation_scores.append(correlation)
+            vulnerable_circuits.append({
+                'circuit_id': circuit_id,
+                'guard': effective_guard_id,
+                'exit': effective_exit_id,
+                'original_guard': guard_id,
+                'original_exit': exit_id,
+                'used_guard_replacement': (effective_guard_id != guard_id),
+                'used_exit_replacement': (effective_exit_id != exit_id),
+                'correlation_score': f"{correlation:.3f}",
+                'severity': severity
+            })
+
+            print(f"  Computed: mean_guard_delta={mean_guard:.6f}, mean_exit_delta={mean_exit:.6f}")
+            print(f"  mean_diff={mean_diff:.6f}, correlation={correlation:.3f}, severity={severity}")
+            circuit["analyzed"]=True
 
         total = len(self.circuits_created) if self.circuits_created else 0
         avg_correlation = statistics.mean(correlation_scores) if correlation_scores else 0.0
         effectiveness = (len(vulnerable_circuits) / total * 100) if total else 0.0
 
-        result = {
-            'attack_type': 'End-to-End Correlation (with middle fallbacks)',
-            'vulnerable_circuits': len(vulnerable_circuits),
-            'total_circuits': total,
-            'average_correlation': f"{avg_correlation:.3f}",
-            'details': vulnerable_circuits[:5],
-            'effectiveness': f"{effectiveness:.1f}%"
-        }
+        print("\n=== Summary ===")
+        print(f"  Vulnerable circuits: {len(vulnerable_circuits)}/{total}")
+        print(f"  Attack effectiveness: {effectiveness:.1f}%")
+        print(f"  Average correlation score: {avg_correlation:.3f}")
 
-        print("\nResults:")
-        print(f"  Vulnerable circuits: {result['vulnerable_circuits']}/{result['total_circuits']}")
-        print(f"  Attack effectiveness: {result['effectiveness']}")
-        print(f"  Average correlation score: {result['average_correlation']}")
 
-        if vulnerable_circuits:
-            ex = vulnerable_circuits[0]
-            print(f"\n  Example vulnerable circuit:")
-            print(f"    Circuit {ex['circuit_id']}: {ex['original_guard']} -> ... -> {ex['original_exit']}")
-            print(f"    Correlation: {ex['correlation_score']}")
 
-        return result
     
     def circuit_building_attack(self):
         i=0
         for node in self.nodes:
-            if i<len(self.timing_data):
-                if node.compromised and node.running:
-                    print(node.circuit_building_compromisation)
-                    i+=1
-            for entry in node.circuit_building_compromisation:
-                if entry not in self.circuits_Explored:
-                    self.circuits_Explored.append(entry)
+            if node.compromised:
+                for entry in node.RoutingEntry:
+                    print(entry)
 
 
     def cellFlood_attack(self,node,ip,port):

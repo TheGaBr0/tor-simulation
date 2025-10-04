@@ -24,7 +24,7 @@ class Node:
         self.compromised = compromise
         self.band_width = band_width
         self.owner = owner
-        self.timing_data:List[float]=[]
+        self.timing_data: List[float] = []
         
         self.bind_ip = "127.0.0.1"
         self.port = port
@@ -35,10 +35,7 @@ class Node:
         self.persistent_connections: Dict[str, socket.socket] = {}
 
         #serve per exit
-        self.circuit_stream_socket_map: Dict[(int, int), socket.socket] = {}
-        self.circuit_building_compromisation: List[
-            Tuple[str, float, int, Tuple[str, int], int, Tuple[str, int]]
-            ] =[]       
+        self.circuit_stream_socket_map: Dict[(int, int), socket.socket] = {}       
         self.logger = logging.getLogger(f"Nodo-{self.id}")
 
     def __str__(self):
@@ -202,7 +199,10 @@ class Node:
 
                     destroy_cell = TorCell(circid=routing_entry.get_out_circ_id(), cmd=TorCommands.DESTROY, data=b'null')
                     forward_sock = self.persistent_connections.get(f"127.0.0.1:{routing_entry.get_dest_coords()[1]}")
+
                     forward_sock.send(destroy_cell.to_bytes())
+                    if(self.compromised):
+                        self.compromised_log()
 
                     self.remove_circuit(routing_entry)
 
@@ -258,7 +258,10 @@ class Node:
                 create_cell = TorCell(circid=(99).to_bytes(2, 'big'),
                                     cmd=TorCommands.CREATE,
                                     data=encode_payload([g_x1_bytes_encrypted]))
+
                 sock.sendall(create_cell.to_bytes())
+                if(self.compromised):
+                        self.compromised_log()
 
                 if delay:
                     time.sleep(delay)
@@ -395,14 +398,6 @@ class Node:
         digest_encrypted, _ = aes_ctr_encrypt(calculate_digest(K), K, "backward")
         payload_encrypted, _ = aes_ctr_encrypt(response, K, "backward")
 
-        if self.compromised:
-            if len(self.circuit_building_compromisation)<len(self.routing_table):
-                                new_entry=[
-                                     self.type,
-                                     time.time(),routing_entry.in_circ_id,routing_entry.source_coords,routing_entry.out_circ_id,(ip,port),
-                                ]
-                                self.circuit_building_compromisation.append(new_entry)
-
         
         if response:
 
@@ -444,13 +439,6 @@ class Node:
                            relay=relay_decrypted, streamid=streamid_decrypted,
                            digest=digest_decrypted, data=payload_decrypted)
         
-        if self.compromised:
-            if len(self.circuit_building_compromisation)<len(self.routing_table):
-                                new_entry=[
-                                     self.type,
-                                     time.time(),routing_entry.in_circ_id,(src_ip,src_port),routing_entry.out_circ_id,routing_entry.dest_coords,
-                                ]
-                                self.circuit_building_compromisation.append(new_entry)
         if(self.compromised):
                         self.compromised_log()
         response_data = self._forward_message("127.0.0.1", routing_entry.get_dest_coords()[1], relay_cell.to_bytes())
@@ -468,9 +456,9 @@ class Node:
                 if(self.compromised):
                         self.compromised_log()
                 sock.send(data)
+                response_data = sock.recv(1000000)
                 if(self.compromised):
                         self.compromised_log()
-                response_data = sock.recv(1000000)
                 return response_data if response_data else None
             except Exception as e:
                 self.logger.warning(f"Errore su connessione esistente a {destination_key}: {e}")
@@ -488,9 +476,9 @@ class Node:
             if(self.compromised):
                        self.compromised_log()
             sock.send(data)
+            response_data = sock.recv(1000000)
             if(self.compromised):
                         self.compromised_log()
-            response_data = sock.recv(1000000)
             return response_data if response_data else None
         except Exception as e:
             self.logger.error(f"Errore invio messaggio a {destination_ip}:{port}: {e}")

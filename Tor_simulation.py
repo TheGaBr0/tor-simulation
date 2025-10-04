@@ -214,6 +214,7 @@ class EntityConnectionManager:
     def connect_client(self, client_id, circuit_id):
         client_info = self.clients[client_id]
         circuit_info = client_info['circuits'][circuit_id]
+        
 
         worker = ConnectionWorker(client_info['client'], circuit_id, circuit_info['color'])
 
@@ -444,8 +445,8 @@ class EntityConnectionManager:
 def main():
     dir_server= DirectoryServer(random_ipv4(),9000)
     interesting_nodes=[]
-    temp_nodes=[]
-    compromission_rate=100
+    sim=SecurityTest()
+
     
 
     dir_server.start()
@@ -585,8 +586,16 @@ def main():
                 # Ensure circuit exists
                 if circuit_id not in terminal.client.circuits:
                     manager.add_circuit(client_id, circuit_id)
-
+                    
+                interesting_nodes.clear() 
+                for node in manager.clients.get(client_id).get("client").circuits.get(circuit_id):
+                    interesting_nodes.append(node)
+                
+                
                 manager.send_message(client_id, server_ip, server_port, payload, circuit_id)
+                sim.network_analysis(interesting_nodes,circuit_id)
+                sim.correlation_attack()
+                sim.circuit_building_attack()
                 terminal.append_log(f"Sending '{payload}' to {server_ip}:{server_port} via circuit {circuit_id}")
 
             elif command == "status":
