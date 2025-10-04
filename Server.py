@@ -14,13 +14,15 @@ RECORDS = {
 
 
 class Server:
-    def __init__(self, server_id: str, ip: str, port: int):
+    def __init__(self, server_id: str, ip: str, port: int, compromised: bool):
         self.id = server_id
         self.ip = ip
 
         # Socket e threading
         self.bind_ip = "127.0.0.1"
         self.port = port
+
+        self.compromised = compromised
 
         self.server_socket: Optional[socket.socket] = None
         self.running = False
@@ -118,8 +120,11 @@ class Server:
                 data = client_socket.recv(4096)
                 if not data:
                     break
-
-                response = self._process_message(data)
+                
+                if not self.compromised:
+                    response = self._process_message(data)
+                else:
+                    response = self._process_message_attacker(data)
 
                 client_socket.sendall(response)     
     
@@ -139,5 +144,8 @@ class Server:
 
         return encode_payload([data_to_bytes(record)])
 
+    def _process_message_attacker(self, data):
 
+        self.logger.info(f"Richiesta ricevuta, invio dati malevoli'")
 
+        return encode_payload([data_to_bytes("Bad code")])

@@ -144,34 +144,49 @@ class DirectoryServer:
                 self.logger.debug(f"Errore chiusura connessione con {client_id}: {e}")
     
 
-
-    def _make_network(self, num_guards=10, num_relays=10, num_exits=10, compromise_fraction=0.1) -> List[Node]:
+    def _make_network(self, num_guards=10, num_relays=10, num_exits=10, 
+                    guard_compromise_prob=0.5, relay_compromise_prob=0.2, exit_compromise_prob=0.5) -> List[Node]:
         first_port = 20000
+        
         # create guards
         for i in range(num_guards):
-            compromised =True
-            new_node = Node(f'G{i}', 'guard', compromise=compromised, ip_address=self._random_ipv4(),
-                            band_width=self._random_band_width(), owner=self._random_owner(), port=first_port)
-
+            compromised = random.random() < guard_compromise_prob
+            new_node = Node(
+                f'G{i}', 'guard', compromise=compromised, 
+                ip_address=self._random_ipv4(),
+                band_width=self._random_band_width(),
+                owner=self._random_owner(),
+                port=first_port
+            )
             self.guards.append(new_node)
-            first_port+=1
-        # relays
+            first_port += 1
+
+        # create relays
         for i in range(num_relays):
-            compromised =True
-            new_node = Node(f'R{i}', 'relay', compromise=compromised, ip_address=self._random_ipv4(),
-                            band_width=self._random_band_width(), owner=self._random_owner(), port=first_port)
-
+            compromised = random.random() < relay_compromise_prob
+            new_node = Node(
+                f'R{i}', 'relay', compromise=compromised, 
+                ip_address=self._random_ipv4(),
+                band_width=self._random_band_width(),
+                owner=self._random_owner(),
+                port=first_port
+            )
             self.relays.append(new_node)
-            first_port+=1
-        # exits
+            first_port += 1
+
+        # create exits
         for i in range(num_exits):
-            compromised =True
-
-            new_node = Node(f'E{i}', 'exit', compromise=compromised, ip_address=self._random_ipv4(),
-                            band_width=self._random_band_width(), owner=self._random_owner(), port=first_port)
-
+            compromised = random.random() < exit_compromise_prob
+            new_node = Node(
+                f'E{i}', 'exit', compromise=compromised, 
+                ip_address=self._random_ipv4(),
+                band_width=self._random_band_width(),
+                owner=self._random_owner(),
+                port=first_port
+            )
             self.exits.append(new_node)
-            first_port+=1
+            first_port += 1
+
 
     def create_nodes_packet(self) -> bytes:
         """

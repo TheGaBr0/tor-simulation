@@ -77,9 +77,20 @@ class SendMessageWorker(QObject):
         self.server_id = server_id
         self.exit_id = exit_id
         self.client_id = client_id
-
     def run(self):
         try:
+            # circuit_path is now a list of Node objects
+            circuit_nodes = self.client.circuits.get(self.circuit_id)
+            if not circuit_nodes or not isinstance(circuit_nodes, list):
+                print(f"Error: circuit {self.circuit_id} not ready on client {self.client_id}")
+                return
+
+            # Extract node IDs
+            path_ids = [getattr(node, 'id', None) for node in circuit_nodes]
+            if None in path_ids:
+                print(f"Error: one or more nodes in circuit {self.circuit_id} have no id")
+                return
+
             self.client.send_message_to_tor_network(
                 self.server_ip,
                 self.server_port,
@@ -147,9 +158,11 @@ class EntityConnectionManager:
             'server_id': server_id,
         }
 
-        terminal = TerminalWidget(server_id, server)
+        terminal = ServerTerminal(server_id, server.logger)
         self.terminals[server_id] = terminal
         self.servers[server_id]['server'].manager = self
+
+        terminal.append_log(f"To send a message to this server -> send {server.ip} {server.port} alpha 1")
     
     def on_client_click(self, client_id):
         """Handle client node click - show terminal"""
@@ -451,8 +464,9 @@ def main():
     dir_server.start()
     i=0
 
-    provider_server_1 = Server("S1", random_ipv4(), 21000)
-    provider_server_2 = Server("S2", random_ipv4(), 27000)
+    provider_server_1 = Server("S1", random_ipv4(), 21000, compromised=False)
+    provider_server_2 = Server("S2", random_ipv4(), 27000, compromised=False)
+    attacker_server = Server("S3", random_ipv4(), 28000, compromised=True)
 
     # Initialize clients
     client_1 = Client("C1", random_ipv4(), 22000, 22001)
@@ -462,13 +476,14 @@ def main():
     threading.Thread(target=dir_server.start, daemon=True).start()
     threading.Thread(target=provider_server_1.start, daemon=True).start()
     threading.Thread(target=provider_server_2.start, daemon=True).start()
+    threading.Thread(target=attacker_server.start, daemon=True).start()
 
     # Setup GUI nodes - use actual node IDs from directory server
     hosts = [{'id': 'C1'}, {'id': 'C2'}]
     guards = [{'id': node.id} for node in dir_server.guards]
     relays = [{'id': node.id} for node in dir_server.relays]
     exits = [{'id': node.id} for node in dir_server.exits]
-    servers = [{'id': 'S1'}, {'id': 'S2'}]
+    servers = [{'id': 'S1'}, {'id': 'S2'}, {'id': 'S3'}]
 
     app = QApplication(sys.argv)
     editor = DynamicNetworkEditor(hosts=hosts, guards=guards, relays=relays, exits=exits, servers=servers)
@@ -480,6 +495,8 @@ def main():
         for node in group if node.compromised
     ]
 
+    compromised_nodes.append("S3")
+
     editor.highlight_nodes(compromised_nodes)
 
     editor.show()
@@ -490,9 +507,11 @@ def main():
     # Register servers
     manager.register_server('S1', provider_server_1)
     manager.register_server('S2', provider_server_2)
+    manager.register_server('S3', attacker_server)
 
     editor.set_node_clickable('S1', manager.on_server_click)
     editor.set_node_clickable('S2', manager.on_server_click)
+    editor.set_node_clickable('S3', manager.on_server_click)
     
     # Register clients
     manager.register_client('C1', client_1, circuit_id=1)
@@ -539,7 +558,7 @@ def main():
                     return
 
                 # Add circuit dynamically if missing
-                if circuit_id not in terminal.client.circuits:
+                if circuit_id not in manager.clients[client_id]['circuits']:
                     manager.add_circuit(client_id, circuit_id)
 
                 # Schedule connection
@@ -585,7 +604,7 @@ def main():
                 # Ensure circuit exists
                 if circuit_id not in terminal.client.circuits:
                     manager.add_circuit(client_id, circuit_id)
-
+                
                 manager.send_message(client_id, server_ip, server_port, payload, circuit_id)
                 terminal.append_log(f"Sending '{payload}' to {server_ip}:{server_port} via circuit {circuit_id}")
 
