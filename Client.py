@@ -94,9 +94,9 @@ class Client:
     
 
     def _handshake_guard(self, circuit_id):
+        
         x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.get_guard(circuit_id).pub)
         self.g_x1, self.x1 = g_x1, x1
-        
         create_cell = TorCell(circid=circuit_id, cmd=TorCommands.CREATE, data=encode_payload([g_x1_bytes_encrypted]))
         
         success = self._send_request("127.0.0.1", self.get_guard(circuit_id).port, create_cell.to_bytes())
@@ -222,11 +222,17 @@ class Client:
             self.logger.info(f"Circuit id {circuit_id} mancante")
             return
 
-        self.logger.info("Connessione con server...")
-        success = self.enstablish_connection_with_server(server_ip, server_port, circuit_id)
+        print(self.server_stream_circuit_map)
+
+        if not self.server_stream_circuit_map or self.server_stream_circuit_map.get(f"{server_ip}:{server_port}")[0] != circuit_id:
+            self.logger.info("Connessione con server...")
+            success = self.enstablish_connection_with_server(server_ip, server_port, circuit_id)
+            if(success):
+                self.logger.info("Connessione con server avvenuta con successo, invio dati")
+        else:
+            success = True
 
         if(success):
-            self.logger.info("Connessione con server avvenuta con successo, invio dati")
             self.send_message_to_server(server_ip, server_port, payload, circuit_id)
 
     def enstablish_connection_with_server(self, server_ip: str, server_port: int, circuit_id: int) -> bool:
@@ -236,7 +242,7 @@ class Client:
         used_stream_ids = {v[1] for v in self.server_stream_circuit_map.values()}
         random_stream_id = self._random_stream_id(used_stream_ids)
 
-        self.server_stream_circuit_map[f"{server_ip}:{server_port}"] = (circuit_id ,random_stream_id) 
+        self.server_stream_circuit_map[f"{server_ip}:{server_port}"] = (circuit_id, random_stream_id) 
 
         relay = RelayCommands.BEGIN
         streamid = data_to_bytes(data_to_bytes(random_stream_id))
@@ -261,6 +267,7 @@ class Client:
         payload = encode_payload([data_to_bytes(payload)])
 
         circid, streamid = self.server_stream_circuit_map.get(f"{server_ip}:{server_port}")
+
 
         relay = RelayCommands.DATA
         streamid = data_to_bytes(streamid)

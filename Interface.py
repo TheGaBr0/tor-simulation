@@ -227,7 +227,7 @@ class DynamicNetworkEditor(QGraphicsView):
         self._draw_nodes()
 
     # Evidenzia nodi compromessi o selezionati
-    def highlight_nodes(self, node_ids, color="#e74c3c", thickness=4):
+    def highlight_nodes(self, node_ids, color="#ff0000", thickness=4):
         for node_id in node_ids:
             node = self.nodes.get(node_id)
             if node:
