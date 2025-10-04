@@ -1,335 +1,564 @@
-import random
-import statistics
 import time
-from typing import List, Dict, Optional, Tuple
-import socket
-from Node import *
-# from Node import *   # keep your Node class import as you had it
+from typing import List, Dict, Set, Tuple, Optional
+from collections import defaultdict
+import statistics
 
-class SecurityTest:
-    def __init__(self):
-        self.nodes = []
-        self.compromision_rate = []
-        self.compromised_nodes: List[str] = []
-        self.circuits_created: List[Dict] = []   # start empty list
-        self.circuits_Explored: List[List[
-            Tuple[str, float, int, Tuple[str, int], int, Tuple[str, int]]
-            ]] =[]
-
-    def compromise(self):
-         for node in self.nodes:
-            if random.random() < (self.compromision_rate / 100):
-                  node.compromised = True
-
-    def create_circuit(self,
-                       circuit_id: str,
-                       guard,
-                       times_guard:  Optional[List],
-                       middle_list: Optional[List],
-                       times_List: Optional[List[List]],
-                       exit_node,
-                       times_exit: Optional[List],
-                       guard_comp: bool,
-                       middle_list_comp: Optional[List[bool]],
-                       exit_comp: bool,
-                       analyzed:bool
-                       ) -> Dict:
-      
-        middle_list = middle_list or []
-        # default compromised flags to False for each middle node if not provided
-        if middle_list_comp is None and times_List is None:
-            middle_list_comp = [False] * len(middle_list)
-            times_List=[None] * len(middle_list)
-
-        if len(middle_list_comp) != len(middle_list):
-            raise ValueError("middle_list_comp must have same length as middle_list")
-
-        circuit = {
-            'circuit_id': circuit_id,
-            'guard': guard,
-            "times_guard": times_guard,
-            'middle_list': middle_list,
-            'times_List':times_List,
-            'exit': exit_node,
-            'times_exit':times_exit,
-            'guard_compromised': bool(guard_comp),
-            'middle_compromised_list': middle_list_comp,
-            'exit_compromised': bool(exit_comp),
-            'analyzed': analyzed
-        }
-        return circuit
-
-    def extract_circuit(self, circuit_id: str) -> Optional[Dict]:
-        """Return the circuit dict for circuit_id or None if not found."""
-        for c in self.circuits_created:
-            if c.get('circuit_id') == circuit_id:
-                return c
-        return None
-
-    def find_circuits_with_node(self, node_id: str) -> List[Dict]:
-        """Return all circuits that include node_id (guard, any middle, or exit)."""
-        found = []
-        for c in self.circuits_created:
-            # check guard
-            guard = c.get('guard')
-            if guard and getattr(guard, 'id', guard) == node_id:
-                found.append(c)
-                continue
-            # check exit
-            exit_n = c.get('exit')
-            if exit_n and getattr(exit_n, 'id', exit_n) == node_id:
-                found.append(c)
-                continue
-            # check middle list
-            for m in c.get('middle_list', []):
-                if getattr(m, 'id', m) == node_id:
-                    found.append(c)
-                    break
-        return found
-
-    def extract_all_circuits(self) -> List[Dict]:
-        """Return all circuits (shallow copy)."""
-        return list(self.circuits_created)
-
-
-    def network_analysis(self, nodes: List,circ_id):
-        """Analyze the network and randomly compromise nodes based on compromision_rate.
-           Initializes timing/packet data for compromised nodes.
+class CorrelationAttackAnalyzer:
+    """
+    Performs timing correlation attacks on Tor networks by analyzing
+    timestamp patterns from compromised nodes.
+    """
+    
+    def __init__(self, compromised_nodes: List, time_window: float = 2.0, 
+                 correlation_threshold: float = 0.7):
         """
-        self.nodes=nodes
-        self.compromised_nodes = []
-        relay_nodes=[]
-        relay_nodes_compromised=[]
-        relay_nodes_times=[[]]
-
-        for node in self.nodes:
-            if node.compromised:
-                self.compromised_nodes.append(getattr(node, 'id', node))
-                # Initialize data structures for this compromised node
-
-            if node.type=="guard":
-                if node.compromised:
-                     temp=self.create_circuit(
-                                circ_id,
-                                node,
-                                node.timing_data,
-                                None,
-                                None,
-                                None,
-                                None,
-                                node.compromised,
-                                None,
-                                None,
-                                False)
-            elif node.type=="relay":
-               relay_nodes.append(node)
-               relay_nodes_compromised.append(node.compromised)
-               relay_nodes_times.append(node.timing_data)
-            elif node.type=="exit":
-                temp["middle_list"]=relay_nodes.copy()
-                temp['times_List']=relay_nodes_times.copy()
-                temp["exit"]=node
-                temp['times_exit']=node.timing_data
-                temp["middle_compromised_list"]=relay_nodes_compromised.copy()
-                temp["exit_compromised"]=node.compromised
-                self.circuits_created.append(temp)
-                relay_nodes.clear()
-                relay_nodes_compromised.clear()
-                relay_nodes_times.clear()
-               
-
-        print(
-            f"Network Status:\n"
-            f"Total nodes: {len(self.nodes)}\n"
-            f"Compromised nodes: {len(self.compromised_nodes)}\n"
-            f"Compromise probability: {(len(self.compromised_nodes) / len(self.nodes) * 100):.1f}%"
-        )
-
-
-    def correlation_attack(self):
-        print("\n=== ATTACK 1: End-to-End Correlation Attack (with middle-node fallbacks using circuit times) ===")
-
-        vulnerable_circuits = []
-        correlation_scores = []
-
-        def get_node_id(node_or_id):
-            """Return node id whether item is node object or raw id."""
-            if node_or_id is None:
-                return None
-            return getattr(node_or_id, "id", node_or_id)
+        Initialize the correlation attack analyzer.
         
-        def print_circuit_info(circuit):
-            for entry in circuit: 
-                print(f"{entry}:{circuit.get(entry)}")
-               
-
-        for circuit in self.circuits_created:
-            #if  circuit.get("analyzed"):
-            #    print_circuit_info(circuit)
-            #    continue
-            if not isinstance(circuit, dict):
-                print("Skipping non-dict circuit entry.")
-                continue
-
-            circuit_id = circuit.get('circuit_id', '<no-id>')
-            guard_comp = circuit.get('guard_compromised', False)
-            exit_comp = circuit.get('exit_compromised', False)
-
-            guard = circuit.get('guard')
-            exit_node = circuit.get('exit')
-
-            guard_id = get_node_id(guard)
-            exit_id = get_node_id(exit_node)
-
-            times_guard = circuit.get('times_guard')
-            times_exit = circuit.get('times_exit')
-            times_List = circuit.get('times_List') or []
-
-            middle_list = circuit.get('middle_list') or []
-            middle_comp_flags = circuit.get('middle_compromised_list') or []
-
-            first_comp_middle_idx = None
-            last_comp_middle_idx = None
-
-            for i, m in enumerate(middle_list):
-                flag = False
-                if i < len(middle_comp_flags):
-                    flag = bool(middle_comp_flags[i])
-                if not flag and hasattr(m, 'compromised'):
-                    flag = bool(getattr(m, 'compromised', False))
-                elif not flag:
-                    mid_id = get_node_id(m)
-                    flag = mid_id in getattr(self, "compromised_nodes", [])
-
-                if flag:
-                    if first_comp_middle_idx is None:
-                        first_comp_middle_idx = i
-                    last_comp_middle_idx = i
-
-            effective_guard_id = guard_id if guard_comp and guard_id is not None else (
-                get_node_id(middle_list[first_comp_middle_idx]) if first_comp_middle_idx is not None else None
-            )
-            effective_exit_id = exit_id if exit_comp and exit_id is not None else (
-                get_node_id(middle_list[last_comp_middle_idx]) if last_comp_middle_idx is not None else None
-            )
-
-            def pick_times_for_guard():
-                if guard_comp and times_guard:
-                    return times_guard, 'times_guard'
-                if first_comp_middle_idx is not None and first_comp_middle_idx < len(times_List):
-                    candidate = times_List[first_comp_middle_idx]
-                    if candidate:
-                        return candidate, f'times_List[{first_comp_middle_idx}]'
-                return self.timing_data.get(effective_guard_id, []), 'timing_data'
-
-            def pick_times_for_exit():
-                if exit_comp and times_exit:
-                    return times_exit, 'times_exit'
-                if last_comp_middle_idx is not None and last_comp_middle_idx < len(times_List):
-                    candidate = times_List[last_comp_middle_idx]
-                    if candidate:
-                        return candidate, f'times_List[{last_comp_middle_idx}]'
-                return self.timing_data.get(effective_exit_id, []), 'timing_data'
-
-            print("\n--- Circuit:", circuit_id, "---")
-            print(f"  original_guard: {guard_id!s} (compromised={guard_comp})")
-            print(f"  original_exit : {exit_id!s} (compromised={exit_comp})")
-            print(f"  effective_guard: {effective_guard_id!s} (used_replacement={effective_guard_id != guard_id})")
-            print(f"  effective_exit : {effective_exit_id!s} (used_replacement={effective_exit_id != exit_id})")
-
-            if effective_guard_id is None or effective_exit_id is None:
-                print("  SKIPPED: missing effective guard or exit (no compromised nodes available for either side).")
-                continue
-
-            guard_times, guard_times_source = pick_times_for_guard()
-            exit_times, exit_times_source = pick_times_for_exit()
-
-            guard_times = guard_times or []
-            exit_times = exit_times or []
-
-            def fmt_times_info(times, source):
-                if not times:
-                    return f"{source} -> empty"
-                try:
-                    return f"{source} -> n={len(times)}, first={times[0]}, last={times[-1]}"
-                except Exception:
-                    return f"{source} -> n={len(times)} (non-indexable contents)"
-
-            print("  guard_times source/info:", fmt_times_info(guard_times, guard_times_source))
-            print("  exit_times  source/info:", fmt_times_info(exit_times, exit_times_source))
-
-            if len(guard_times) < 2 or len(exit_times) < 2:
-                print("  SKIPPED: insufficient timestamps (need >=2 on both sides).")
-                continue
-
-            try:
-                guard_deltas = [guard_times[i+1] - guard_times[i] for i in range(len(guard_times)-1)]
-                exit_deltas = [exit_times[i+1] - exit_times[i] for i in range(len(exit_times)-1)]
-            except Exception as e:
-                print(f"  ERROR computing deltas: {e}")
-                continue
-
-            if not guard_deltas or not exit_deltas:
-                print("  SKIPPED: empty deltas after computation.")
-                continue
-
-            mean_guard = statistics.mean(guard_deltas)
-            mean_exit = statistics.mean(exit_deltas)
-            mean_diff = abs(mean_guard - mean_exit)
-            correlation = 1 - (mean_diff / max(mean_guard, mean_exit))
-            correlation = max(0.0, min(1.0, correlation))
-
-            severity = 'CRITICAL' if correlation > 0.8 else ('HIGH' if correlation > 0.5 else 'MEDIUM')
-
-            correlation_scores.append(correlation)
-            vulnerable_circuits.append({
-                'circuit_id': circuit_id,
-                'guard': effective_guard_id,
-                'exit': effective_exit_id,
-                'original_guard': guard_id,
-                'original_exit': exit_id,
-                'used_guard_replacement': (effective_guard_id != guard_id),
-                'used_exit_replacement': (effective_exit_id != exit_id),
-                'correlation_score': f"{correlation:.3f}",
-                'severity': severity
-            })
-
-            print(f"  Computed: mean_guard_delta={mean_guard:.6f}, mean_exit_delta={mean_exit:.6f}")
-            print(f"  mean_diff={mean_diff:.6f}, correlation={correlation:.3f}, severity={severity}")
-            circuit["analyzed"]=True
-
-        total = len(self.circuits_created) if self.circuits_created else 0
-        avg_correlation = statistics.mean(correlation_scores) if correlation_scores else 0.0
-        effectiveness = (len(vulnerable_circuits) / total * 100) if total else 0.0
-
-        print("\n=== Summary ===")
-        print(f"  Vulnerable circuits: {len(vulnerable_circuits)}/{total}")
-        print(f"  Attack effectiveness: {effectiveness:.1f}%")
-        print(f"  Average correlation score: {avg_correlation:.3f}")
-
-
-
-    
-    def circuit_building_attack(self):
-        i=0
-        for node in self.nodes:
-            if node.compromised:
-                for entry in node.RoutingEntry:
-                    print(entry)
-
-
-    def cellFlood_attack(self,node,ip,port):
-        for nd in self.nodes:
-              if node==nd.id and nd.compromised:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.connect((ip,port))
-                while 1:
-                    x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(nd.pub)
-                    create_cell = TorCell(circid=99, cmd=TorCommands.CREATE, data=encode_payload([g_x1_bytes_encrypted]))
-                    sock.sendall(create_cell.to_bytes())
+        Args:
+            compromised_nodes: List of compromised Node objects
+            time_window: Time window in seconds for correlating events (default: 2.0s)
+            correlation_threshold: Minimum correlation score to link flows (0-1)
+        """
+        self.compromised_nodes = compromised_nodes
+        self.time_window = time_window
+        self.correlation_threshold = correlation_threshold
         
-
-
-
+        # Separate entry and exit nodes
+        self.entry_nodes = [node for node in compromised_nodes if node.type == "guard"]
+        self.exit_nodes = [node for node in compromised_nodes if node.type == "exit"]
+        self.middle_nodes = [node for node in compromised_nodes if node.type == "relay"]
+        
+    def collect_timing_data(self) -> Dict[str, List[float]]:
+        """
+        Collect timing data from all compromised nodes.
+        
+        Returns:
+            Dictionary mapping node_id to list of timestamps
+        """
+        timing_data = {}
+        for node in self.compromised_nodes:
+            timing_data[node.id] = node.timing_data.copy()
+        return timing_data
     
+    def _create_time_series(self, timestamps: List[float]) -> List[Tuple[float, int]]:
+        """
+        Convert raw timestamps into a time series of event counts per interval.
+        
+        Args:
+            timestamps: List of raw timestamps
+            
+        Returns:
+            List of (time_bucket, event_count) tuples
+        """
+        if not timestamps:
+            return []
+        
+        # Sort timestamps
+        sorted_times = sorted(timestamps)
+        
+        # Create time buckets (100ms intervals for granularity)
+        bucket_size = 0.1
+        min_time = sorted_times[0]
+        max_time = sorted_times[-1]
+        
+        # Count events per bucket
+        buckets = defaultdict(int)
+        for ts in sorted_times:
+            bucket = int((ts - min_time) / bucket_size)
+            buckets[bucket] += 1
+        
+        # Convert to time series
+        time_series = [(min_time + bucket * bucket_size, count) 
+                       for bucket, count in sorted(buckets.items())]
+        
+        return time_series
     
+    def _calculate_correlation_score(self, entry_times: List[float], 
+                                     exit_times: List[float]) -> float:
+        """
+        Calculate correlation score between entry and exit timing patterns.
+        Uses a bidirectional matching approach with penalties.
+        
+        Algorithm:
+        1. For each entry event, find the closest exit event within time_window
+        2. Each exit event can only be matched once (greedy matching)
+        3. Calculate base score as: (matched_events) / (total_events)
+        4. Apply balance penalty if one side has many more events than the other
+        
+        Args:
+            entry_times: Timestamps from entry node
+            exit_times: Timestamps from exit node
+            
+        Returns:
+            Correlation score between 0 and 1
+        """
+        if not entry_times or not exit_times:
+            return 0.0
+        
+        # Create time series for both
+        entry_series = self._create_time_series(entry_times)
+        exit_series = self._create_time_series(exit_times)
+        
+        if not entry_series or not exit_series:
+            return 0.0
+        
+        # Find overlapping time window
+        entry_start = entry_series[0][0]
+        entry_end = entry_series[-1][0]
+        exit_start = exit_series[0][0]
+        exit_end = exit_series[-1][0]
+        
+        # Check for temporal overlap (accounting for network delay)
+        max_delay = 1.0  # Maximum expected Tor network delay in seconds
+        
+        if exit_start > entry_end + max_delay or entry_start > exit_end + max_delay:
+            return 0.0  # No temporal overlap
+        
+        # Bidirectional matching with penalties
+        entry_matched = 0
+        used_exits = set()
+        
+        # Match entry events to exit events (greedy: find closest match)
+        for entry_time in entry_times:
+            best_match = None
+            best_distance = float('inf')
+            
+            # Find the closest unused exit event within the time window
+            for i, exit_time in enumerate(exit_times):
+                if i in used_exits:
+                    continue  # This exit was already matched
+                    
+                distance = abs(exit_time - entry_time)
+                
+                if distance <= self.time_window and distance < best_distance:
+                    best_match = i
+                    best_distance = distance
+            
+            if best_match is not None:
+                entry_matched += 1
+                used_exits.add(best_match)  # Mark this exit as used
+        
+        # Count how many exit events got matched
+        exit_matched = len(used_exits)
+        
+        # Calculate score considering both directions
+        total_events = len(entry_times) + len(exit_times)
+        matched_events = entry_matched + exit_matched
+        
+        # Base correlation score: how many events were successfully paired
+        base_score = matched_events / total_events if total_events > 0 else 0.0
+        
+        # Penalty for imbalanced matching
+        entry_ratio = entry_matched / len(entry_times) if len(entry_times) > 0 else 0.0
+        exit_ratio = exit_matched / len(exit_times) if len(exit_times) > 0 else 0.0
+        balance_factor = min(entry_ratio, exit_ratio) / max(entry_ratio, exit_ratio) if max(entry_ratio, exit_ratio) > 0 else 0.0
+        
+        # Final score with balance consideration
+        # 70% weight on base score, 30% on balance
+        correlation = base_score * (0.7 + 0.3 * balance_factor)
+        
+        return min(correlation, 1.0)
+    
+    def _find_session_boundaries(self, timestamps: List[float], 
+                                 gap_threshold: float = 5.0) -> List[Tuple[float, float]]:
+        """
+        Identify distinct sessions based on gaps in activity.
+        
+        Args:
+            timestamps: List of timestamps
+            gap_threshold: Minimum gap in seconds to consider a new session
+            
+        Returns:
+            List of (session_start, session_end) tuples
+        """
+        if not timestamps:
+            return []
+        
+        sorted_times = sorted(timestamps)
+        sessions = []
+        session_start = sorted_times[0]
+        
+        for i in range(1, len(sorted_times)):
+            gap = sorted_times[i] - sorted_times[i-1]
+            if gap > gap_threshold:
+                # End current session
+                sessions.append((session_start, sorted_times[i-1]))
+                # Start new session
+                session_start = sorted_times[i]
+        
+        # Add final session
+        sessions.append((session_start, sorted_times[-1]))
+        
+        return sessions
+    
+    def get_timing_statistics(self) -> Dict:
+        """
+        Get statistical analysis of timing patterns.
+        
+        Returns:
+            Dictionary with timing statistics
+        """
+        timing_data = self.collect_timing_data()
+        stats = {}
+        
+        for node_id, timestamps in timing_data.items():
+            if len(timestamps) < 2:
+                continue
+                
+            sorted_times = sorted(timestamps)
+            inter_arrival_times = [sorted_times[i+1] - sorted_times[i] 
+                                  for i in range(len(sorted_times)-1)]
+            
+            stats[node_id] = {
+                'total_events': len(timestamps),
+                'mean_inter_arrival': statistics.mean(inter_arrival_times) if inter_arrival_times else 0,
+                'std_inter_arrival': statistics.stdev(inter_arrival_times) if len(inter_arrival_times) > 1 else 0,
+                'min_gap': min(inter_arrival_times) if inter_arrival_times else 0,
+                'max_gap': max(inter_arrival_times) if inter_arrival_times else 0
+            }
+        
+        return stats
+    
+    def _calculate_confidence(self, correlation_score: float, 
+                            entry_events: int, exit_events: int) -> str:
+        """Calculate confidence for individual sessions."""
+        min_events = min(entry_events, exit_events)
+        
+        if correlation_score >= 0.85 and min_events >= 15:
+            return "HIGH"
+        elif correlation_score >= 0.65 and min_events >= 8:
+            return "MEDIUM"
+        else:
+            return "LOW"
+    
+    def perform_correlation_attack(self) -> List[Dict]:
+        """
+        Execute the timing correlation attack to link entry and exit traffic.
+        
+        Returns:
+            List of correlated flows with their metadata
+        """
+        timing_data = self.collect_timing_data()
+        correlated_flows = []
+        
+        # Remove duplicate nodes by ID
+        unique_entry_nodes = list({node.id: node for node in self.entry_nodes}.values())
+        unique_exit_nodes = list({node.id: node for node in self.exit_nodes}.values())
+        
+        # Analyze each entry node
+        for entry_node in unique_entry_nodes:
+            entry_times = timing_data.get(entry_node.id, [])
+            if not entry_times:
+                continue
+            
+            entry_sessions = self._find_session_boundaries(entry_times)
+            
+            # Try to correlate with each exit node
+            for exit_node in unique_exit_nodes:
+                exit_times = timing_data.get(exit_node.id, [])
+                if not exit_times:
+                    continue
+                
+                exit_sessions = self._find_session_boundaries(exit_times)
+                
+                # Correlate each entry session with exit sessions
+                for entry_start, entry_end in entry_sessions:
+                    entry_session_times = [t for t in entry_times 
+                                          if entry_start <= t <= entry_end]
+                    
+                    for exit_start, exit_end in exit_sessions:
+                        exit_session_times = [t for t in exit_times 
+                                             if exit_start <= t <= exit_end]
+                        
+                        # Calculate correlation
+                        score = self._calculate_correlation_score(
+                            entry_session_times, exit_session_times
+                        )
+                        
+                        if score >= self.correlation_threshold:
+                            correlated_flows.append({
+                                'entry_node': entry_node.id,
+                                'entry_ip': entry_node.ip,
+                                'exit_node': exit_node.id,
+                                'exit_ip': exit_node.ip,
+                                'correlation_score': score,
+                                'entry_session': (entry_start, entry_end),
+                                'exit_session': (exit_start, exit_end),
+                                'entry_events': len(entry_session_times),
+                                'exit_events': len(exit_session_times),
+                                'session_duration': entry_end - entry_start,
+                                'confidence': self._calculate_confidence(score, 
+                                    len(entry_session_times), len(exit_session_times))
+                            })
+        
+        # Deduplication
+        unique_flows = {}
+        for flow in correlated_flows:
+            key = (flow['entry_node'], flow['exit_node'], 
+                   round(flow['entry_session'][0], 2), 
+                   round(flow['exit_session'][0], 2))
+            
+            if key not in unique_flows or flow['correlation_score'] > unique_flows[key]['correlation_score']:
+                unique_flows[key] = flow
+        
+        correlated_flows = list(unique_flows.values())
+        correlated_flows.sort(key=lambda x: x['correlation_score'], reverse=True)
+        
+        return correlated_flows
+    
+    def perform_cumulative_correlation_attack(self) -> List[Dict]:
+        """
+        Execute correlation attack with cumulative scoring across all sessions
+        for the same circuit. This builds confidence over time as more traffic
+        is observed through the same entry-exit pair.
+        
+        Returns:
+            List of correlated flows with cumulative metrics
+        """
+        timing_data = self.collect_timing_data()
+        
+        # Deduplicate nodes
+        unique_entry_nodes = list({node.id: node for node in self.entry_nodes}.values())
+        unique_exit_nodes = list({node.id: node for node in self.exit_nodes}.values())
+        
+        # Store all session data per circuit
+        circuit_sessions = {}
+        
+        # Analyze each entry-exit pair
+        for entry_node in unique_entry_nodes:
+            entry_times = timing_data.get(entry_node.id, [])
+            if not entry_times:
+                continue
+            
+            entry_sessions = self._find_session_boundaries(entry_times)
+            
+            for exit_node in unique_exit_nodes:
+                exit_times = timing_data.get(exit_node.id, [])
+                if not exit_times:
+                    continue
+                
+                exit_sessions = self._find_session_boundaries(exit_times)
+                circuit_key = (entry_node.id, exit_node.id)
+                
+                # Collect all correlating sessions for this circuit
+                for entry_start, entry_end in entry_sessions:
+                    entry_session_times = [t for t in entry_times 
+                                          if entry_start <= t <= entry_end]
+                    
+                    for exit_start, exit_end in exit_sessions:
+                        exit_session_times = [t for t in exit_times 
+                                             if exit_start <= t <= exit_end]
+                        
+                        score = self._calculate_correlation_score(
+                            entry_session_times, exit_session_times
+                        )
+                        
+                        # Collect ALL sessions above minimum threshold
+                        if score > 0.5:
+                            if circuit_key not in circuit_sessions:
+                                circuit_sessions[circuit_key] = {
+                                    'entry_node': entry_node,
+                                    'exit_node': exit_node,
+                                    'sessions': []
+                                }
+                            
+                            circuit_sessions[circuit_key]['sessions'].append({
+                                'entry_session': (entry_start, entry_end),
+                                'exit_session': (exit_start, exit_end),
+                                'entry_times': entry_session_times,
+                                'exit_times': exit_session_times,
+                                'individual_score': score,
+                                'entry_events': len(entry_session_times),
+                                'exit_events': len(exit_session_times)
+                            })
+        
+        # Calculate cumulative scores for each circuit
+        correlated_flows = []
+        
+        for circuit_key, circuit_data in circuit_sessions.items():
+            sessions = circuit_data['sessions']
+            if not sessions:
+                continue
+            
+            # Combine all timing data across sessions
+            all_entry_times = []
+            all_exit_times = []
+            total_entry_events = 0
+            total_exit_events = 0
+            
+            for session in sessions:
+                all_entry_times.extend(session['entry_times'])
+                all_exit_times.extend(session['exit_times'])
+                total_entry_events += session['entry_events']
+                total_exit_events += session['exit_events']
+            
+            # Calculate cumulative correlation score
+            cumulative_score = self._calculate_correlation_score(
+                all_entry_times, all_exit_times
+            )
+            
+            # Calculate session consistency bonus
+            session_scores = [s['individual_score'] for s in sessions]
+            avg_session_score = statistics.mean(session_scores)
+            score_consistency = 1.0 - statistics.stdev(session_scores) if len(session_scores) > 1 else 1.0
+            
+            # Bonus for multiple consistent sessions
+            session_bonus = min(0.1 * (len(sessions) - 1), 0.3)  # Up to 30% bonus
+            consistency_bonus = 0.05 * score_consistency  # Up to 5% bonus
+            
+            # Final cumulative score
+            final_score = min(cumulative_score + session_bonus + consistency_bonus, 1.0)
+            
+            # Calculate cumulative confidence
+            cumulative_confidence = self._calculate_cumulative_confidence(
+                final_score, total_entry_events, total_exit_events, len(sessions)
+            )
+            
+            if final_score >= self.correlation_threshold:
+                entry_node = circuit_data['entry_node']
+                exit_node = circuit_data['exit_node']
+                
+                first_session = min(sessions, key=lambda s: s['entry_session'][0])
+                last_session = max(sessions, key=lambda s: s['entry_session'][1])
+                
+                total_duration = last_session['entry_session'][1] - first_session['entry_session'][0]
+                
+                correlated_flows.append({
+                    'entry_node': entry_node.id,
+                    'entry_ip': entry_node.ip,
+                    'exit_node': exit_node.id,
+                    'exit_ip': exit_node.ip,
+                    'correlation_score': final_score,
+                    'cumulative_score': cumulative_score,
+                    'session_bonus': session_bonus,
+                    'consistency_bonus': consistency_bonus,
+                    'entry_events': total_entry_events,
+                    'exit_events': total_exit_events,
+                    'num_sessions': len(sessions),
+                    'session_details': sessions,
+                    'total_duration': total_duration,
+                    'first_seen': first_session['entry_session'][0],
+                    'last_seen': last_session['entry_session'][1],
+                    'confidence': cumulative_confidence,
+                    'avg_session_score': avg_session_score,
+                    'score_consistency': score_consistency
+                })
+        
+        # Sort by final score
+        correlated_flows.sort(key=lambda x: x['correlation_score'], reverse=True)
+        
+        return correlated_flows
+    
+    def _calculate_cumulative_confidence(self, score: float, entry_events: int, 
+                                        exit_events: int, num_sessions: int) -> str:
+        """
+        Calculate confidence level based on cumulative evidence.
+        More sessions and events increase confidence.
+        """
+        min_events = min(entry_events, exit_events)
+        
+        # Adjusted thresholds considering cumulative data
+        if score >= 0.85 and min_events >= 20 and num_sessions >= 2:
+            return "HIGH"
+        elif score >= 0.80 and min_events >= 15:
+            return "HIGH"
+        elif score >= 0.70 and min_events >= 10:
+            return "MEDIUM"
+        elif score >= 0.60 and min_events >= 6:
+            return "MEDIUM"
+        else:
+            return "LOW"
+    
+    def generate_cumulative_attack_report(self) -> str:
+        """
+        Generate report showing cumulative correlation with session evolution.
+        """
+        correlated_flows = self.perform_cumulative_correlation_attack()
+        timing_stats = self.get_timing_statistics()
+        
+        report = []
+        report.append("=" * 80)
+        report.append("TOR CUMULATIVE TIMING CORRELATION ATTACK REPORT")
+        report.append("=" * 80)
+        report.append(f"\nCompromised Nodes: {len(self.compromised_nodes)}")
+        report.append(f"  - Entry Nodes: {len(self.entry_nodes)}")
+        report.append(f"  - Middle Nodes: {len(self.middle_nodes)}")
+        report.append(f"  - Exit Nodes: {len(self.exit_nodes)}")
+        report.append(f"\nTime Window: {self.time_window}s")
+        report.append(f"Correlation Threshold: {self.correlation_threshold}")
+        
+        # Timing statistics
+        report.append("\n" + "=" * 80)
+        report.append("TIMING STATISTICS (per node)")
+        report.append("=" * 80)
+        for node_id, stats in timing_stats.items():
+            report.append(f"\n{node_id}:")
+            report.append(f"  Total Events: {stats['total_events']}")
+            report.append(f"  Mean Inter-arrival: {stats['mean_inter_arrival']*1000:.2f}ms")
+        
+        report.append("\n" + "=" * 80)
+        report.append("CUMULATIVE CORRELATED FLOWS")
+        report.append("=" * 80)
+        report.append(f"\nTotal Circuits Detected: {len(correlated_flows)}")
+        
+        if not correlated_flows:
+            report.append("\nNo correlated flows detected above threshold.")
+        else:
+            for flow in correlated_flows:
+                conf_emoji = "🔴" if flow['confidence'] == 'HIGH' else "🟡" if flow['confidence'] == 'MEDIUM' else "⚪"
+                
+                report.append(f"\n{'='*80}")
+                report.append(f"{conf_emoji} CIRCUIT: {flow['entry_node']} ➜ ??? ➜ {flow['exit_node']}")
+                report.append(f"{'='*80}")
+                
+                report.append(f"\nCumulative Correlation Score: {flow['correlation_score']:.1%} ({flow['confidence']} Confidence)")
+                report.append(f"  Base Correlation: {flow['cumulative_score']:.1%}")
+                report.append(f"  Session Bonus: +{flow['session_bonus']:.1%} ({flow['num_sessions']} sessions)")
+                report.append(f"  Consistency Bonus: +{flow['consistency_bonus']:.1%}")
+                
+                report.append(f"\nTotal Traffic Observed:")
+                report.append(f"  Entry Events: {flow['entry_events']}")
+                report.append(f"  Exit Events: {flow['exit_events']}")
+                report.append(f"  Observation Period: {flow['total_duration']:.1f}s")
+                report.append(f"  First Seen: {time.strftime('%H:%M:%S', time.localtime(flow['first_seen']))}")
+                report.append(f"  Last Seen: {time.strftime('%H:%M:%S', time.localtime(flow['last_seen']))}")
+                
+                report.append(f"\nSession Breakdown ({flow['num_sessions']} sessions):")
+                for i, session in enumerate(flow['session_details'], 1):
+                    e_start = session['entry_session'][0]
+                    report.append(f"  Session {i}: {session['individual_score']:.1%} score, "
+                                f"{session['entry_events']}→{session['exit_events']} events, "
+                                f"{time.strftime('%H:%M:%S', time.localtime(e_start))}")
+                
+                report.append(f"\nSession Consistency: {flow['score_consistency']:.1%}")
+                report.append(f"Average Session Score: {flow['avg_session_score']:.1%}")
+        
+        report.append("\n" + "=" * 80)
+        report.append("ATTACK SUMMARY")
+        report.append("=" * 80)
+        
+        high_conf = [f for f in correlated_flows if f['confidence'] == 'HIGH']
+        med_conf = [f for f in correlated_flows if f['confidence'] == 'MEDIUM']
+        
+        if high_conf:
+            report.append(f"\n✅ SUCCESS: {len(high_conf)} high-confidence deanonymization(s)")
+            report.append("   Cumulative evidence confirms these circuits are COMPROMISED.")
+        elif med_conf:
+            report.append(f"\n⚠️  PARTIAL SUCCESS: {len(med_conf)} medium-confidence correlation(s)")
+            report.append("   Continue monitoring to increase confidence.")
+        else:
+            report.append("\n❌ LIMITED SUCCESS: Only low-confidence correlations detected.")
+            report.append("   Longer observation period needed.")
+        
+        report.append("\n" + "=" * 80)
+        return "\n".join(report)
+    
+    def get_deanonymized_circuits(self) -> List[Dict]:
+        """
+        Return only high-confidence deanonymized circuits.
+        
+        Returns:
+            List of circuits that have been successfully deanonymized
+        """
+        all_flows = self.perform_cumulative_correlation_attack()
+        return [flow for flow in all_flows if flow['confidence'] == 'HIGH']

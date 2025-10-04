@@ -439,6 +439,7 @@ class Node:
                            relay=relay_decrypted, streamid=streamid_decrypted,
                            digest=digest_decrypted, data=payload_decrypted)
         
+
         if(self.compromised):
                         self.compromised_log()
         response_data = self._forward_message("127.0.0.1", routing_entry.get_dest_coords()[1], relay_cell.to_bytes())

@@ -11,7 +11,7 @@ from NodeTerminalWidget import NodeTerminal
 from ServerTerminalWindow import ServerTerminal
 import random
 import time
-from tor_security_sim import SecurityTest
+from tor_security_sim import *
 
 def random_ipv4() -> str:
     """Return a random IPv4 address."""
@@ -458,8 +458,6 @@ class EntityConnectionManager:
 def main():
     dir_server= DirectoryServer(random_ipv4(),9000)
     interesting_nodes=[]
-    sim=SecurityTest()
-
     
 
     dir_server.start()
@@ -606,15 +604,24 @@ def main():
                 if circuit_id not in terminal.client.circuits:
                     manager.add_circuit(client_id, circuit_id)
                     
-                interesting_nodes.clear() 
                 for node in manager.clients.get(client_id).get("client").circuits.get(circuit_id):
-                    interesting_nodes.append(node)
-                
-                
+                    if node.compromised:
+                        interesting_nodes.append(node)
+
                 manager.send_message(client_id, server_ip, server_port, payload, circuit_id)
-                sim.network_analysis(interesting_nodes,circuit_id)
-                sim.correlation_attack()
-                sim.circuit_building_attack()
+                # Create analyzer
+                analyzer = CorrelationAttackAnalyzer(
+                    compromised_nodes=interesting_nodes,
+                    time_window=10.0,
+                    correlation_threshold=0.75
+                )
+
+                # Generate cumulative report (builds confidence over time)
+                report = analyzer.generate_cumulative_attack_report()
+                print(report)
+
+                # Or get just high-confidence circuits
+                deanonymized = analyzer.get_deanonymized_circuits()
                 terminal.append_log(f"Sending '{payload}' to {server_ip}:{server_port} via circuit {circuit_id}")
 
             elif command == "status":
