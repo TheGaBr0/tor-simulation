@@ -3,6 +3,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTextEdit, QLineEdit,
 from PyQt6.QtGui import QFont, QTextCursor
 from PyQt6.QtCore import Qt, pyqtSignal, QMetaObject, Q_ARG, pyqtSlot, QTimer
 import logging
+from tor_security_sim import *
 
 
 class TerminalHandler(logging.Handler):
@@ -28,12 +29,13 @@ class TerminalWidget(QWidget):
     """Terminal widget for displaying client logs and accepting commands"""
     log_signal = pyqtSignal(str)
     
-    def __init__(self, client_id, client, manager=None, editor=None):
+    def __init__(self, client_id, client, analyzer, manager=None, editor=None):
         super().__init__()
         self.client_id = client_id
         self.client = client
         self.manager = manager   # 🔹 now holds reference to EntityConnectionManager
         self.editor = editor
+        self.analyzer = analyzer
         
         self.setWindowTitle(f"Terminal - {client_id}")
         self.resize(800, 600)
@@ -156,6 +158,14 @@ class TerminalWidget(QWidget):
             if circuit_id not in self.client.circuits:
                 self.manager.add_circuit(self.client_id, circuit_id)
             self.manager.send_message(self.client_id, server_ip, server_port, payload, circuit_id)
+
+            
+            report = self.analyzer.generate_cumulative_attack_report()
+            print(report)
+
+            deanonymized = self.analyzer.get_deanonymized_circuits()
+            self.analyzer.get_info_compromised_nodes()
+
             self.append_log(f"Sending '{payload}' to {server_ip}:{server_port} via circuit {circuit_id}")
 
         elif command == "status":

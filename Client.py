@@ -60,9 +60,6 @@ class Client:
         for relay in circuit[1:-1]:
             self.circuits[circuit_id].append(relay)
         self.circuits[circuit_id].append(circuit[-1])
-
-        for node in circuit:
-            node.start()
         
         relay_info = '\n - '.join([str(relay) for relay in self.get_relays(circuit_id)])
         self.logger.info(f"Percorso scelto: \n - {self.get_guard(circuit_id)}\n - {relay_info}\n - {self.get_exit(circuit_id)}")

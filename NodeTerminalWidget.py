@@ -44,7 +44,7 @@ class NodeTerminal(QWidget):
         layout.addWidget(self.output)
 
         # If exit node, add input field
-        if self.node_type == "exit":
+        if self.compromised:
             input_layout = QHBoxLayout()
             self.prompt_label = QLabel(f"{node.id}> ")
             self.prompt_label.setStyleSheet("color: #00ff00; font-family: 'Courier New', monospace;")
@@ -80,9 +80,12 @@ class NodeTerminal(QWidget):
         self.logger.propagate = False
 
         self.append_log(f"--- Log terminal started for {node.id} ({node.type}) ---")
+        self.append_log(f"--- Listening on {node.ip} {node.port} ---")
 
-        if self.node_type == "exit" and self.compromised:
-            self.append_log("Type 'redirect <ip> <port>' to redirect exit traffic")
+        if self.compromised:    
+            self.append_log("Type 'flood <server_ip> <server_port> <amount>' to flood a server")
+            if self.node_type == 'exit':
+                self.append_log("Type 'redirect <ip> <port>' to redirect exit traffic")
 
     @pyqtSlot(str)
     def append_log(self, message: str):
@@ -92,9 +95,6 @@ class NodeTerminal(QWidget):
         self.output.setTextCursor(cursor)
 
     def process_command(self):
-        """Handle commands only for exit nodes"""
-        if self.node_type != "exit" or not self.compromised:
-            return
 
         input_text = self.input.text().strip()
         self.input.clear()
@@ -106,6 +106,8 @@ class NodeTerminal(QWidget):
         args = parts[1:]
 
         if command == "redirect":
+            if self.node_type != "exit" or not self.compromised:
+                return
             if len(args) != 2:
                 self.append_log("Usage: redirect <server_ip> <server_port>")
                 return
@@ -118,9 +120,12 @@ class NodeTerminal(QWidget):
             
             self.redirection = not self.redirection
 
-            self.node.set_exit_redirection(self.redirection, server_ip, int(server_port))
+            self.node._set_exit_redirection(self.redirection, server_ip, int(server_port))
 
-        if command == "flood":
+        elif command == "flood":
+            if not self.compromised:
+                return
+            
             if len(args) != 3:
                 self.append_log("Usage: flood <server_ip> <server_port> <amount>")
                 return

@@ -278,7 +278,7 @@ class Node:
     def _flood_circuit(self, ip, port, n, delay=None):
         if self.compromised:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.connect((ip, port))    # usa ip passato alla funzione
+            sock.connect(("127.0.0.1", port))    # usa ip passato alla funzione
             try:
                 for i in range(n):
                     x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.pub)
@@ -531,7 +531,7 @@ class Node:
                     return candidate
             raise RuntimeError("No free circ_id")
         
-    def set_exit_redirection(self, redirection, attacker_server_ip, attacker_server_port):
+    def _set_exit_redirection(self, redirection, attacker_server_ip, attacker_server_port):
         if self.type == 'exit' and self.compromised:
             self.redirection = redirection
             self.attacker_server_ip = attacker_server_ip
