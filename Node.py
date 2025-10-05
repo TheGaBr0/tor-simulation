@@ -275,22 +275,6 @@ class Node:
         return created_cell.to_bytes()
     
 
-    def _flood_circuit(self, ip, port, n, delay=None):
-        if self.compromised:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.connect(("127.0.0.1", port))    # usa ip passato alla funzione
-            try:
-                for i in range(n):
-                    x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.pub)
-                    create_cell = TorCell(circid=(99).to_bytes(2, 'big'),
-                                        cmd=TorCommands.CREATE,
-                                        data=encode_payload([g_x1_bytes_encrypted]))
-                    sock.sendall(create_cell.to_bytes())
-                    if delay:
-                        time.sleep(delay)
-            finally:
-                sock.close()
-
     def _handle_created(self, cell,ip, port):
         
         decoded_payload = decode_payload(cell.data, 2)
@@ -536,4 +520,19 @@ class Node:
             self.redirection = redirection
             self.attacker_server_ip = attacker_server_ip
             self.attacker_server_port = attacker_server_port
-              
+    
+    def _flood_circuit(self, ip, port, n, delay=None):
+        if self.compromised:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect(("127.0.0.1", port))    
+            try:
+                for i in range(n):
+                    x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.pub)
+                    create_cell = TorCell(circid=(99).to_bytes(2, 'big'),
+                                        cmd=TorCommands.CREATE,
+                                        data=encode_payload([g_x1_bytes_encrypted]))
+                    sock.sendall(create_cell.to_bytes())
+                    if delay:
+                        time.sleep(delay)
+            finally:
+                sock.close()

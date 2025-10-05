@@ -163,8 +163,8 @@ class TerminalWidget(QWidget):
             report = self.analyzer.generate_cumulative_attack_report()
             print(report)
 
-            deanonymized = self.analyzer.get_deanonymized_circuits()
-            self.analyzer.get_info_compromised_nodes()
+            #deanonymized = self.analyzer.get_deanonymized_circuits()
+            #self.analyzer.get_info_compromised_nodes()
 
             self.append_log(f"Sending '{payload}' to {server_ip}:{server_port} via circuit {circuit_id}")
 

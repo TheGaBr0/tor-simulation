@@ -133,7 +133,7 @@ class NodeTerminal(QWidget):
 
             self.append_log(f"[Exit {self.node_id}] Flooding {amount} to {server_ip}:{server_port}")
 
-            self.node._flood_node(server_ip, server_port, amount)
+            self.node._flood_circuit(server_ip, int(server_port), int(amount), 0.1)
 
         elif command == "help":
             self.append_log("Available commands (exit only):")
