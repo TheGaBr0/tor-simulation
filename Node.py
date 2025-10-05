@@ -175,6 +175,31 @@ class Node:
     def compromised_log(self):
         self.timing_data.append(time.time())
 
+    def print_routing_entry_table(self,entry: RoutingEntry):
+        rows = [
+            ("Node type", entry.get_node_type()),
+            ("Source IP", entry.get_source_coords()[0]),
+            ("Source Port", entry.get_source_coords()[1]),
+            ("Destination IP", entry.get_dest_coords()[0]),
+            ("Destination Port", entry.get_dest_coords()[1]),
+            ("Incoming Circuit ID", entry.get_in_circ_id()),
+            ("Outgoing Circuit ID", entry.get_out_circ_id()),
+            ("Created At", entry.get_creation_timestamp()),
+        ]
+
+        max_key_len = max(len(row[0]) for row in rows)
+        print("=" * (max_key_len + 30))
+        for key, val in rows:
+            print(f"{key:<{max_key_len}} : {val}")
+        print("=" * (max_key_len + 30))
+
+
+    def generate_circuit_route(self):
+         for entry in self.routing_table:
+              self.print_routing_entry_table(entry)
+         
+        
+
     def _process_message(self, data, ip, port, direction):
         try:
             
@@ -241,7 +266,7 @@ class Node:
 
         new_routing_entry = RoutingEntry(ip, port, int.from_bytes(cell.circid), 
                                                self.allocate_circ_id_for_outgoing(int.from_bytes(cell.circid)+1), 
-                                               K, time.time())
+                                               K, time.time(),self.type)
         self.routing_table.append(new_routing_entry)
 
         created_cell = TorCell(circid=new_routing_entry.get_in_circ_id(), cmd=TorCommands.CREATED,
@@ -250,25 +275,21 @@ class Node:
         return created_cell.to_bytes()
     
 
-    def flood_circuit(self, ip, port, n=90, delay=None):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect((ip, port))    # usa ip passato alla funzione
-        try:
-            for i in range(n):
-                # genera un payload DH valido come fai altrove
-                x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.pub)
-                create_cell = TorCell(circid=(99).to_bytes(2, 'big'),
-                                    cmd=TorCommands.CREATE,
-                                    data=encode_payload([g_x1_bytes_encrypted]))
-
-                sock.sendall(create_cell.to_bytes())
-                if(self.compromised):
-                        self.compromised_log()
-
-                if delay:
-                    time.sleep(delay)
-        finally:
-            sock.close()
+    def _flood_circuit(self, ip, port, n, delay=None):
+        if self.compromised:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((ip, port))    # usa ip passato alla funzione
+            try:
+                for i in range(n):
+                    x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.pub)
+                    create_cell = TorCell(circid=(99).to_bytes(2, 'big'),
+                                        cmd=TorCommands.CREATE,
+                                        data=encode_payload([g_x1_bytes_encrypted]))
+                    sock.sendall(create_cell.to_bytes())
+                    if delay:
+                        time.sleep(delay)
+            finally:
+                sock.close()
 
     def _handle_created(self, cell,ip, port):
         

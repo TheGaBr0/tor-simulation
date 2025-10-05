@@ -464,9 +464,7 @@ def main():
     nodes = dir_server.guards+dir_server.relays+dir_server.exits
 
     interesting_nodes=[]
-    sim=SecurityTest()
-
-    i=0
+ 
 
     provider_server_1 = Server("S1", random_ipv4(), 21000, compromised=False)
     provider_server_2 = Server("S2", random_ipv4(), 27000, compromised=False)
@@ -591,7 +589,7 @@ def main():
                     lambda cid=client_id, circ=circuit_id: manager.destroy_client_circuit(cid, circ)
                 )
 
-            elif command == "send":
+            elif command == "send": 
                 if len(args) < 4:
                     terminal.append_log("Usage: send <server_ip> <server_port> <message> <circuit_id>")
                     return
@@ -607,10 +605,15 @@ def main():
                 # Ensure circuit exists
                 if circuit_id not in terminal.client.circuits:
                     manager.add_circuit(client_id, circuit_id)
-                    
-                for node in manager.clients.get(client_id).get("client").circuits.get(circuit_id):
-                    if node.compromised:
-                        interesting_nodes.append(node)
+                
+                if manager.clients.get(client_id).get("client").circuits.get(circuit_id):    
+                    for node in manager.clients.get(client_id).get("client").circuits.get(circuit_id):
+                        if node.compromised:
+                            interesting_nodes.append(node)
+                else:
+                    print(f"CircId {circuit_id} inesistente")
+                    return
+                
 
                 manager.send_message(client_id, server_ip, server_port, payload, circuit_id)
                 # Create analyzer
@@ -620,12 +623,12 @@ def main():
                     correlation_threshold=0.75
                 )
 
-                # Generate cumulative report (builds confidence over time)
                 report = analyzer.generate_cumulative_attack_report()
                 print(report)
 
-                # Or get just high-confidence circuits
                 deanonymized = analyzer.get_deanonymized_circuits()
+                analyzer.get_info_compromised_nodes()
+                random_node= random.choice(interesting_nodes)
                 terminal.append_log(f"Sending '{payload}' to {server_ip}:{server_port} via circuit {circuit_id}")
 
             elif command == "status":

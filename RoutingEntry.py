@@ -1,14 +1,16 @@
 class RoutingEntry:
-    def __init__(self, source_ip: str, source_port: int,
-                 in_circ_id: int, out_circ_id: int, session_key: int, created_at: int):
+    def __init__(self,source_ip: str, source_port: int,
+                 in_circ_id: int, out_circ_id: int, session_key: int, created_at: int,node_type: str):
         self.source_coords = (source_ip, source_port)
         self.in_circ_id = in_circ_id         
         self.out_circ_id = out_circ_id             
         self._session_key = session_key
         self.dest_coords = (None, None) 
         self.created_at = created_at
+        self.node_type=node_type
 
     # Getters
+    def get_node_type(self): return self.node_type
     def get_source_coords(self): return self.source_coords
     def get_in_circ_id(self): return self.in_circ_id
     def get_out_circ_id(self): return self.out_circ_id
