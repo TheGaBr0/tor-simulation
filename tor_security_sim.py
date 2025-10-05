@@ -562,3 +562,11 @@ class CorrelationAttackAnalyzer:
         """
         all_flows = self.perform_cumulative_correlation_attack()
         return [flow for flow in all_flows if flow['confidence'] == 'HIGH']
+    
+
+
+    def get_info_compromised_nodes(self):
+        for node in self.compromised_nodes:
+            node.generate_circuit_route()
+
+        
