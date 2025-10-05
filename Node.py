@@ -515,5 +515,4 @@ class Node:
             self.redirection = redirection
             self.attacker_server_ip = attacker_server_ip
             self.attacker_server_port = attacker_server_port
-            
-            
+              

@@ -293,6 +293,15 @@ class EntityConnectionManager:
                     print(f"[DEBUG] Decrement: Exit->Server edge {edge} now has usage {self.edge_usage.get(edge, 0)} (during destroy {circuit_id})")
                     if self.edge_usage[edge] <= 0:
                         del self.edge_usage[edge]
+                        self.editor.remove_circuit(f"{circuit_id}_exit")  # 👈 AGGIUNGI QUESTA LINEA
+
+            # reduce edge_usage for exit->server edges immediately
+            for edge in exit_server_edges:
+                if edge in self.edge_usage:
+                    self.edge_usage[edge] -= 1
+                    print(f"[DEBUG] Decrement: Exit->Server edge {edge} now has usage {self.edge_usage.get(edge, 0)} (during destroy {circuit_id})")
+                    if self.edge_usage[edge] <= 0:
+                        del self.edge_usage[edge]
                         self.editor.remove_circuit(circuit_id)
 
             # **Important:** remove the manager-side circuit record now so the later
@@ -464,9 +473,6 @@ def main():
     nodes = dir_server.guards+dir_server.relays+dir_server.exits
 
     interesting_nodes=[]
-    sim=SecurityTest()
-
-    i=0
 
     provider_server_1 = Server("S1", random_ipv4(), 21000, compromised=False)
     provider_server_2 = Server("S2", random_ipv4(), 27000, compromised=False)

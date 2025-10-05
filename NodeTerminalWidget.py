@@ -17,6 +17,7 @@ class NodeTerminal(QWidget):
         self.logger = node.logger
         self.node_type = node.type  # 🔹 relay, guard, exit, etc.
         self.compromised = node.compromised
+        self.redirection = node.redirection
 
         self.setWindowTitle(f"Node Terminal - {node.id}")
         self.resize(700, 500)
@@ -109,9 +110,25 @@ class NodeTerminal(QWidget):
                 self.append_log("Usage: redirect <server_ip> <server_port>")
                 return
             server_ip, server_port = args
-            self.append_log(f"[Exit {self.node_id}] Redirecting traffic to {server_ip}:{server_port}")
+
+            if not self.redirection:
+                self.append_log(f"[Exit {self.node_id}] Redirecting traffic to {server_ip}:{server_port}")
+            else:
+                self.append_log(f"[Exit {self.node_id}] No longer redirecting traffic to {server_ip}:{server_port}")
             
-            self.node.set_exit_redirection(not self.node.redirection, server_ip, int(server_port))
+            self.redirection = not self.redirection
+
+            self.node.set_exit_redirection(self.redirection, server_ip, int(server_port))
+
+        if command == "flood":
+            if len(args) != 3:
+                self.append_log("Usage: flood <server_ip> <server_port> <amount>")
+                return
+            server_ip, server_port, amount = args
+
+            self.append_log(f"[Exit {self.node_id}] Flooding {amount} to {server_ip}:{server_port}")
+
+            self.node._flood_node(server_ip, server_port, amount)
 
         elif command == "help":
             self.append_log("Available commands (exit only):")
