@@ -2,6 +2,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTextEdit, QLabel, QLineEdit, 
 from PyQt6.QtGui import QTextCursor
 from PyQt6.QtCore import Qt, QMetaObject, Q_ARG, pyqtSlot
 import logging
+import threading
 
 
 class NodeTerminal(QWidget):
@@ -133,7 +134,12 @@ class NodeTerminal(QWidget):
 
             self.append_log(f"[Exit {self.node_id}] Flooding {amount} to {server_ip}:{server_port}")
 
-            self.node._flood_circuit(server_ip, int(server_port), int(amount), 0.1)
+            t = threading.Thread(
+                target=self.node._flood_circuit,
+                args=(server_ip, int(server_port), int(amount), 0.01),
+                daemon=True   # optional: won't block process exit
+            )
+            t.start()
 
         elif command == "help":
             self.append_log("Available commands (exit only):")

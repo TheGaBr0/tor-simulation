@@ -246,8 +246,10 @@ class EntityConnectionManager:
                 for edge in edges:
                     self.edge_usage[edge] = self.edge_usage.get(edge, 0) + 1
                     print(f"[DEBUG] Increment: Edge {edge} now has usage {self.edge_usage[edge]} (after connect {circuit_id})")
-                self.editor.circuits[circuit_id] = path
-                self.editor.draw_circuit(circuit_id, color)
+                unique_circuit_id = f"{client_id}_{circuit_id}"
+                self.editor.circuits[unique_circuit_id] = path
+                self.editor.draw_circuit(unique_circuit_id, color)
+                circuit_info['unique_circuit_id'] = unique_circuit_id
             # now that the path is fully known, mark connected
             circuit_info['connected'] = True
 
@@ -284,7 +286,8 @@ class EntityConnectionManager:
                     print(f"[DEBUG] Decrement: Edge {edge} now has usage {self.edge_usage.get(edge, 0)} (during destroy {circuit_id})")
                     if self.edge_usage[edge] <= 0:
                         del self.edge_usage[edge]
-                        self.editor.remove_circuit(circuit_id)
+                        unique_circuit_id = circuit_info.get('unique_circuit_id', f"{client_id}_{circuit_id}")
+                        self.editor.remove_circuit(unique_circuit_id)
 
             # reduce edge_usage for exit->server edges immediately
             for edge in exit_server_edges:
@@ -293,7 +296,7 @@ class EntityConnectionManager:
                     print(f"[DEBUG] Decrement: Exit->Server edge {edge} now has usage {self.edge_usage.get(edge, 0)} (during destroy {circuit_id})")
                     if self.edge_usage[edge] <= 0:
                         del self.edge_usage[edge]
-                        self.editor.remove_circuit(f"{circuit_id}_exit")  # 👈 AGGIUNGI QUESTA LINEA
+                        self.editor.remove_circuit(f"{client_id}_{circuit_id}_exit") 
 
             # reduce edge_usage for exit->server edges immediately
             for edge in exit_server_edges:
@@ -302,7 +305,8 @@ class EntityConnectionManager:
                     print(f"[DEBUG] Decrement: Exit->Server edge {edge} now has usage {self.edge_usage.get(edge, 0)} (during destroy {circuit_id})")
                     if self.edge_usage[edge] <= 0:
                         del self.edge_usage[edge]
-                        self.editor.remove_circuit(circuit_id)
+                        unique_circuit_id = circuit_info.get('unique_circuit_id', f"{client_id}_{circuit_id}")
+                        self.editor.remove_circuit(unique_circuit_id)
 
             # **Important:** remove the manager-side circuit record now so the later
             # on_circuit_destroyed handler doesn't double-decrement the same edges.
@@ -425,7 +429,7 @@ class EntityConnectionManager:
         circ.setdefault('exit_server_edges', [])
 
         # Tratta l'edge come un mini-circuito separato
-        edge_circuit_id = f"{circuit_id}_exit"
+        edge_circuit_id = f"{client_id}_{circuit_id}_exit"
         circ['exit_server_edges'].append((exit_id, server_id))
         self.edge_usage[(exit_id, server_id)] = self.edge_usage.get((exit_id, server_id), 0) + 1
         print(f"[DEBUG] Increment: Exit->Server edge ({exit_id}, {server_id}) usage now {self.edge_usage[(exit_id, server_id)]} (circuit {circuit_id})")
