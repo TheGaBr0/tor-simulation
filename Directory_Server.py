@@ -23,7 +23,7 @@ class DirectoryServer:
         self._make_network()
 
     def _make_network(self, num_guards=10, num_relays=10, num_exits=10, 
-                    guard_compromise_prob=0.7, relay_compromise_prob=0.5, exit_compromise_prob=0.7) -> List[Node]:
+                    guard_compromise_prob=0.5, relay_compromise_prob=0.3, exit_compromise_prob=0.5) -> List[Node]:
         first_port = 20000
         
         # create guards
@@ -35,7 +35,7 @@ class DirectoryServer:
                 ip_address=self._random_ipv4(),
                 band_width=self._random_band_width(compromised),
                 uptime=self._random_uptime(compromised),  # aggiunto uptime
-                owner=self._random_owner(),
+                owner=self._random_owner(compromised),
                 port=first_port,
                 compromise=compromised
             )
@@ -50,7 +50,7 @@ class DirectoryServer:
                 ip_address=self._random_ipv4(),
                 band_width=self._random_band_width(compromised),
                 uptime=self._random_uptime(compromised),  # aggiunto uptime
-                owner=self._random_owner(),
+                owner=self._random_owner(compromised),
                 port=first_port,
                 compromise=compromised
             )
@@ -65,7 +65,7 @@ class DirectoryServer:
                 ip_address=self._random_ipv4(),
                 band_width=self._random_band_width(compromised),
                 uptime=self._random_uptime(compromised),  # aggiunto uptime
-                owner=self._random_owner(),
+                owner=self._random_owner(compromised),
                 port=first_port,
                 compromise=compromised
             )
@@ -80,15 +80,32 @@ class DirectoryServer:
         d = random.randint(0, 255)
         return f"{a}.{b}.{c}.{d}"
 
-    def _random_owner(self) -> str:
+    def _random_owner(self, compromised) -> str:
         list_owner=["Bob","Alice","Charlie","Diana","Eve"]
-        return random.choice(list_owner)
+
+        compromised_names = [
+            "darkmirror", "shadowgate", "hydra", "voidlink", "oblivion",
+            "malachite", "inferno", "specter", "cryptix", "venom",
+            "phantasm", "nightfall", "corruptor", "wraith", "blackrose",
+            "bloodmoon", "silencer", "grimnode", "nether", "reaper",
+            "vortex", "blight", "cinder", "voidwalker", "nightshade",
+            "skullnode", "doomlink", "ravager", "hellion", "darkpulse",
+            "shade", "obscura", "chaosnode", "eclipse", "phantomnet",
+            "virusnode", "shadowweb", "malwarehub", "ghostlink", "netdark"
+        ]
+
+        if compromised:
+            return random.choice(compromised_names)
+        else:
+            return random.choice(list_owner)
 
     def _random_band_width(self,compromised) -> int:
         if compromised:
             return (3)
         else:
-            return random.choice([0, 1, 2])
+            items = [0, 1, 2, 3]
+            weights = [0.1, 0.4, 0.4, 0.1]
+            return random.choices(items, weights=weights, k=1)[0]
         
     def _random_uptime(self, compromised: bool) -> int:
         if compromised:

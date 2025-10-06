@@ -83,6 +83,7 @@ class NodeTerminal(QWidget):
         self.append_log(f"--- Log terminal started for {node.id} ({node.type}) ---")
         self.append_log(f"--- Listening on {node.ip} {node.port} ---")
         self.append_log(f"--- Band width: {node.band_width}, Uptime: {node.uptime} ---")
+        self.append_log(f"--- Owner: {node.owner} ---")
 
         if self.compromised:    
             self.append_log("Type 'flood <server_ip> <server_port> <amount>' to flood a server")
@@ -142,7 +143,7 @@ class NodeTerminal(QWidget):
             self.append_log(f"[Exit {self.node_id}] Flooding {amount} to {server_ip}:{server_port}")
 
 
-            for _ in range(10):  # 10 threads flooding
+            for _ in range(5):  # 10 threads flooding
                 t = threading.Thread(
                     target=self.node._flood_circuit,
                     args=(server_ip, int(server_port), int(amount), pub_key),

@@ -41,7 +41,7 @@ class Node:
         self.logger = logging.getLogger(f"Nodo-{self.id}")
 
     def __str__(self):
-        bandwidth_labels = {0: "bassa", 1: "media", 2: "alta"}
+        bandwidth_labels = {0: "bassa", 1: "media", 2: "alta", 3: "ottima"}
         return (f"Node(id='{self.id}', type='{self.type}', ip='{self.ip}:{self.port}', "
                 f"bandwidth='{bandwidth_labels.get(self.band_width, 'sconosciuta')}', "
                 f"owner='{self.owner}', status='{'attivo' if self.running else 'inattivo'}', "
