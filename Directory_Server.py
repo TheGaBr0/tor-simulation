@@ -23,7 +23,7 @@ class DirectoryServer:
         self._make_network()
 
     def _make_network(self, num_guards=10, num_relays=10, num_exits=10, 
-                    guard_compromise_prob=0.4, relay_compromise_prob=0.5, exit_compromise_prob=0.4) -> List[Node]:
+                    guard_compromise_prob=0.7, relay_compromise_prob=0.5, exit_compromise_prob=0.7) -> List[Node]:
         first_port = 20000
         
         # create guards
