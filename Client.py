@@ -418,41 +418,99 @@ class Client:
             if stream_id not in used_ids:
                 return stream_id
 
-    
-    def _choose_from_top5(self, nodes, node_type):
-        filtered = [n for n in self.nodes if n.type == node_type]
-        sorted_nodes = sorted(filtered, key=lambda n: n.band_width, reverse=True)
-        best_three = sorted_nodes[:5]
-        
-        if self.choice_algorithm != 'greedy':
-            random.shuffle(best_three)
-        return best_three[0]
-    
-    def _select_best_node(self, nodes: list[Node]) -> Node:
+
+
+    def _select_best_node(self, nodes: list[Node], 
+                     bandwidth_weight: float = 0.7,
+                     uptime_weight: float = 0.3,
+                     top_n: int = 3) -> Node:
         """
-        Select the best node from a list based on bandwidth and choice algorithm
+        Select the best node from a list based on weighted bandwidth and uptime.
+        
+        Args:
+            nodes: List of nodes to select from
+            bandwidth_weight: Weight for bandwidth (default: 0.7)
+            uptime_weight: Weight for uptime (default: 0.3)
+            top_n: Number of top candidates to randomly choose from (default: 5)
+        
+        Returns:
+            Randomly selected node from top N candidates
+        
+        Raises:
+            ValueError: If nodes list is empty
         """
-        sorted_nodes = sorted(nodes, key=lambda n: n.band_width, reverse=True)
-        best_five = sorted_nodes[:5]
+        if not nodes:
+            raise ValueError("Cannot select from empty node list")
         
-        if self.choice_algorithm != 'greedy':
-            random.shuffle(best_five)
+        # Calculate weighted scores
+        scored_nodes = [
+            (node, node.band_width * bandwidth_weight + node.uptime * uptime_weight) 
+            for node in nodes
+        ]
         
-        return best_five[0]
-    
+        # Sort by score and take top N
+        sorted_nodes = sorted(scored_nodes, key=lambda x: x[1], reverse=True)
+        top_scored = sorted_nodes[:top_n]
+                
+        top_candidates = [node for node, _ in top_scored]
+        selected = random.choice(top_candidates)
+        
+        return selected
+
+
     def _get_16_subnet(self, ip: str) -> str:
         """
-        Extract the /16 subnet from an IP address
+        Extract the /16 subnet from an IP address.
+        
+        Args:
+            ip: IP address string (e.g., '192.168.1.1')
+        
+        Returns:
+            /16 subnet (e.g., '192.168')
         """
         return '.'.join(ip.split('.')[:2])
-    
+
+
+    def _filter_available_nodes(self, node_type: str, 
+                                exclude_owners: set, 
+                                exclude_subnets: set) -> list[Node]:
+        """
+        Filter nodes by type and exclusion criteria.
+        
+        Args:
+            node_type: Type of node to filter ('guard', 'relay', 'exit')
+            exclude_owners: Set of owners to exclude
+            exclude_subnets: Set of /16 subnets to exclude
+        
+        Returns:
+            List of available nodes matching criteria
+        """
+        return [
+            node for node in self.nodes 
+            if node.type == node_type 
+            and node.owner not in exclude_owners
+            and self._get_16_subnet(node.ip) not in exclude_subnets
+        ]
+
+
     def build_circuit(self) -> list[Node]:
         """
-        Build a circuit with self.len_of_circuit nodes:
-        - 1 guard (first node)
-        - self.len_of_circuit-2 relays (middle nodes)
-        - 1 exit (last node)
+        Build a circuit with diverse nodes to enhance anonymity.
         
+        The circuit consists of:
+        - 1 guard node (entry)
+        - N relay nodes (middle, where N = len_of_circuit - 2)
+        - 1 exit node
+        
+        Diversity constraints:
+        - No two nodes share the same owner
+        - No two nodes share the same /16 subnet
+        
+        Returns:
+            List of nodes forming the circuit
+        
+        Raises:
+            ValueError: If circuit length < 3 or insufficient diverse nodes available
         """
         if self.len_of_circuit < 3:
             raise ValueError("Circuit length must be at least 3 nodes")
@@ -461,55 +519,48 @@ class Client:
         used_owners = set()
         used_subnets = set()
         
-        # Step 1: Choose guard
-
+        # Step 1: Select guard node
+        # Reuse existing guard if circuits already exist
         if self.circuits:
             first_key = next(iter(self.circuits))
             guard = self.get_guard(first_key)
         else:
-            guard = self._choose_from_top5(self.nodes, "guard")
+            available_guards = self._filter_available_nodes("guard", used_owners, used_subnets)
+            if not available_guards:
+                raise ValueError("No available guard nodes")
+            guard = self._select_best_node(available_guards)
         
-        #guard = [n for n in self.nodes if n.type == "guard"][0]
         circuit.append(guard)
         used_owners.add(guard.owner)
         used_subnets.add(self._get_16_subnet(guard.ip))
         
-        # Step 2: Choose relays (len_of_circuit - 2 nodes)
+        # Step 2: Select relay nodes
         num_relays = self.len_of_circuit - 2
         
         for i in range(num_relays):
-            # Filter available relays
-            available_relays = [
-                n for n in self.nodes 
-                if n.type == "relay" 
-                and n.owner not in used_owners
-                and self._get_16_subnet(n.ip) not in used_subnets
-            ]
+            available_relays = self._filter_available_nodes("relay", used_owners, used_subnets)
             
             if not available_relays:
-                raise ValueError(f"No available relays for position {i+2} in circuit")
+                raise ValueError(
+                    f"No available relays for position {i + 2} in circuit. "
+                    f"Used owners: {len(used_owners)}, Used subnets: {len(used_subnets)}"
+                )
             
-            # Select best relay
             relay = self._select_best_node(available_relays)
-            #relay = [n for n in self.nodes if n.type == "relay"][0]
             circuit.append(relay)
             used_owners.add(relay.owner)
             used_subnets.add(self._get_16_subnet(relay.ip))
         
-        # Step 3: Choose exit
-        available_exits = [
-            n for n in self.nodes 
-            if n.type == "exit"
-            and n.owner not in used_owners
-            and self._get_16_subnet(n.ip) not in used_subnets
-        ]
+        # Step 3: Select exit node
+        available_exits = self._filter_available_nodes("exit", used_owners, used_subnets)
         
         if not available_exits:
-            raise ValueError("No available exits for circuit")
+            raise ValueError(
+                f"No available exits for circuit. "
+                f"Used owners: {len(used_owners)}, Used subnets: {len(used_subnets)}"
+            )
         
         exit_node = self._select_best_node(available_exits)
-        #exit_node = [n for n in self.nodes if n.type == "exit"][0]
-
         circuit.append(exit_node)
         
         return circuit

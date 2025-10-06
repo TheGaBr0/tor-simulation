@@ -82,6 +82,7 @@ class NodeTerminal(QWidget):
 
         self.append_log(f"--- Log terminal started for {node.id} ({node.type}) ---")
         self.append_log(f"--- Listening on {node.ip} {node.port} ---")
+        self.append_log(f"--- Band width: {node.band_width}, Uptime: {node.uptime} ---")
 
         if self.compromised:    
             self.append_log("Type 'flood <server_ip> <server_port> <amount>' to flood a server")

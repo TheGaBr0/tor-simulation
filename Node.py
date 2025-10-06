@@ -16,13 +16,14 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 
 class Node:
     def __init__(self, node_id: str, node_type: str, ip_address: str, band_width: int, 
-                 owner: str, port: int, compromise: bool):
+                 uptime: int, owner: str, port: int, compromise: bool):
         self.id = node_id
         self.ip = ip_address
         self.type = node_type
         self._priv, self.pub = gen_rsa_keypair()
         self.compromised = compromise
         self.band_width = band_width
+        self.uptime = uptime
         self.owner = owner
         self.timing_data: List[float] = []
         

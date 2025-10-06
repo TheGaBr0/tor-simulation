@@ -481,7 +481,7 @@ def main():
     attacker_server = Server("S3", random_ipv4(), 28000, compromised=True)
 
     # Initialize clients
-    client_1 = Client("C1", random_ipv4(), 22000, 22001,nodes)
+    client_1 = Client("C1", random_ipv4(), 22000, 22001, nodes)
     client_2 = Client("C2", random_ipv4(), 43000, 43001, nodes)
 
     # Start servers in background threads
