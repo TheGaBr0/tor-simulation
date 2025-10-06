@@ -263,6 +263,7 @@ class EntityConnectionManager:
         ).start()
 
     def destroy_client_circuit(self, client_id, circuit_id):
+        """Tear down a client's circuit and clean up all edges"""
         if client_id not in self.clients:
             print(f"Client {client_id} not found")
             return
@@ -273,92 +274,42 @@ class EntityConnectionManager:
             return
 
         client = self.clients[client_id]['client']
-        # capture manager-side data now
-        path = circuit_info.get('path', [])  # used for worker
-        edges = circuit_info.get('edges', []).copy() if 'edges' in circuit_info else []
-        exit_server_edges = circuit_info.get('exit_server_edges', []).copy() if 'exit_server_edges' in circuit_info else []
-
-        # reduce edge_usage for the Tor-path edges immediately (so other circuits keep valid counts)
+        
+        # Get identifiers before cleanup
+        main_circuit_id = circuit_info.get('unique_circuit_id', f"{client_id}_{circuit_id}")
+        exit_circuit_id = f"{client_id}_{circuit_id}_exit"
+        
+        # Remove from GUI first (this handles edge tracking internally)
+        if main_circuit_id in self.editor.circuit_arrows:
+            self.editor.remove_circuit(main_circuit_id)
+        
+        if exit_circuit_id in self.editor.circuit_arrows:
+            self.editor.remove_circuit(exit_circuit_id)
+        
+        # Clear our internal tracking (edge_usage is now obsolete - GUI handles it)
         with self._lock:
-            for edge in edges:
-                if edge in self.edge_usage:
-                    self.edge_usage[edge] -= 1
-                    print(f"[DEBUG] Decrement: Edge {edge} now has usage {self.edge_usage.get(edge, 0)} (during destroy {circuit_id})")
-                    if self.edge_usage[edge] <= 0:
-                        del self.edge_usage[edge]
-                        unique_circuit_id = circuit_info.get('unique_circuit_id', f"{client_id}_{circuit_id}")
-                        self.editor.remove_circuit(unique_circuit_id)
-
-            # reduce edge_usage for exit->server edges immediately
-            for edge in exit_server_edges:
-                if edge in self.edge_usage:
-                    self.edge_usage[edge] -= 1
-                    print(f"[DEBUG] Decrement: Exit->Server edge {edge} now has usage {self.edge_usage.get(edge, 0)} (during destroy {circuit_id})")
-                    if self.edge_usage[edge] <= 0:
-                        del self.edge_usage[edge]
-                        self.editor.remove_circuit(f"{client_id}_{circuit_id}_exit") 
-
-            # reduce edge_usage for exit->server edges immediately
-            for edge in exit_server_edges:
-                if edge in self.edge_usage:
-                    self.edge_usage[edge] -= 1
-                    print(f"[DEBUG] Decrement: Exit->Server edge {edge} now has usage {self.edge_usage.get(edge, 0)} (during destroy {circuit_id})")
-                    if self.edge_usage[edge] <= 0:
-                        del self.edge_usage[edge]
-                        unique_circuit_id = circuit_info.get('unique_circuit_id', f"{client_id}_{circuit_id}")
-                        self.editor.remove_circuit(unique_circuit_id)
-
-            # **Important:** remove the manager-side circuit record now so the later
-            # on_circuit_destroyed handler doesn't double-decrement the same edges.
-            try:
-                del self.clients[client_id]['circuits'][circuit_id]
-                print(f"Circuit {circuit_id} removed from manager records (pending client-side teardown)")
-            except Exception:
-                # if deletion fails, ignore (we'll still start worker)
-                pass
-
-        # Now call the client teardown in background. Manager record already cleaned.
+            # Clean up exit_server_edges from our records
+            circuit_info['exit_server_edges'] = []
+            circuit_info['edges'] = []
+        
+        # Start client-side teardown asynchronously
+        path = circuit_info.get('path', [])[:]
         worker = DestroyCircuitWorker(client, circuit_id, client_id, path)
-        worker.destroyed.connect(self.on_circuit_destroyed)
+        worker.destroyed.connect(lambda: self.on_circuit_destroyed(client_id, circuit_id))
         self.workers.append(worker)
         threading.Thread(target=worker.run, daemon=True).start()
 
 
-    def on_circuit_destroyed(self, client_id, circuit_id, path_node_ids):
-        client_circuits = self.clients.get(client_id, {}).get('circuits', {})
-        circuit_info = client_circuits.get(circuit_id)
-
-        if not circuit_info:
-            # Manager already removed the circuit during destroy_client_circuit.
-            print(f"Circuit {circuit_id} cleanup: manager had no record (client-side may have removed).")
-            return
-
-        # If somehow manager still has record, do a final safe decrement (double-check)
+    def on_circuit_destroyed(self, client_id, circuit_id):
+        """Handle final confirmation that a client's circuit was destroyed"""
         with self._lock:
-            for edge in circuit_info.get('edges', []):
-                if edge in self.edge_usage:
-                    self.edge_usage[edge] -= 1
-                    print(f"[DEBUG] Decrement: Edge {edge} now has usage {self.edge_usage[edge]} (after destroy {circuit_id})")
-
-                    if self.edge_usage[edge] <= 0:
-                        del self.edge_usage[edge]
-                        print(f"[DEBUG] Removing edge {edge} from GUI (no circuits left)")
-                        self.editor.remove_connection_path(list(edge))
-
-            for edge in circuit_info.get('exit_server_edges', []):
-                if edge in self.edge_usage:
-                    self.edge_usage[edge] -= 1
-                    if self.edge_usage[edge] <= 0:
-                        del self.edge_usage[edge]
-                        self.editor.remove_connection_path(list(edge))
-
-            # finally delete the circuit record
-            try:
-                del self.clients[client_id]['circuits'][circuit_id]
-            except Exception:
-                pass
-
-            print(f"Circuit {circuit_id} removed from client {client_id} records and connection cleared")
+            client_data = self.clients.get(client_id, {})
+            client_circuits = client_data.get('circuits', {})
+            
+            # Just remove the circuit record
+            if circuit_id in client_circuits:
+                del client_circuits[circuit_id]
+                print(f"Circuit {circuit_id} fully destroyed for client {client_id}")
 
     def send_message(self, client_id, server_ip, server_port, payload, circuit_id):
         """Send message via a specific circuit of a client"""
@@ -408,9 +359,9 @@ class EntityConnectionManager:
         threading.Thread(target=worker.run, daemon=True).start()
         
     def _draw_exit_to_server(self, exit_id, server_id, color, circuit_id, client_id):
-        """Draw exit->server edge and track usage per circuit using DynamicNetworkEditor's draw_circuit."""
+        """Draw exit->server edge using the DynamicNetworkEditor's circuit system (only once per circuit)"""
         
-        # Verifica che i nodi esistano
+        # Verify nodes exist
         if exit_id not in self.editor.nodes:
             print(f"[DEBUG] Exit node {exit_id} not in editor.nodes, skipping draw")
             return
@@ -428,13 +379,21 @@ class EntityConnectionManager:
 
         circ.setdefault('exit_server_edges', [])
 
-        # Tratta l'edge come un mini-circuito separato
+        # Create unique circuit ID for this exit->server connection
         edge_circuit_id = f"{client_id}_{circuit_id}_exit"
-        circ['exit_server_edges'].append((exit_id, server_id))
-        self.edge_usage[(exit_id, server_id)] = self.edge_usage.get((exit_id, server_id), 0) + 1
-        print(f"[DEBUG] Increment: Exit->Server edge ({exit_id}, {server_id}) usage now {self.edge_usage[(exit_id, server_id)]} (circuit {circuit_id})")
+        
+        # Check if this circuit already has an exit->server edge drawn
+        if edge_circuit_id in self.editor.circuit_arrows:
+            print(f"[DEBUG] Exit->Server edge already drawn for circuit {circuit_id}, skipping")
+            return
+        
+        # Track in our records
+        edge = (exit_id, server_id)
+        if edge not in circ['exit_server_edges']:
+            circ['exit_server_edges'].append(edge)
+            print(f"[DEBUG] Adding Exit->Server edge {edge} for circuit {circuit_id} (first message)")
 
-        # Disegna usando draw_circuit
+        # Draw using editor's circuit system (handles offsets automatically)
         self.editor.circuits[edge_circuit_id] = [exit_id, server_id]
         self.editor.draw_circuit(edge_circuit_id, color)
 
