@@ -202,7 +202,14 @@ class Node:
 
     def _process_message(self, data, ip, port, direction):
         try:
-            
+            match self.band_width:
+                case 2:
+                    time.sleep(0)
+                case 1:
+                    time.sleep(0.3)
+                case 0:
+                    time.sleep(1)
+
             cell = TorCell.from_bytes(data)
                 
             if cell.cmd == TorCommands.CREATE:

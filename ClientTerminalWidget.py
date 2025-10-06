@@ -4,6 +4,7 @@ from PyQt6.QtGui import QFont, QTextCursor
 from PyQt6.QtCore import Qt, pyqtSignal, QMetaObject, Q_ARG, pyqtSlot, QTimer
 import logging
 from tor_security_sim import *
+from AttacksThreading import *
 
 
 class TerminalHandler(logging.Handler):
@@ -159,12 +160,17 @@ class TerminalWidget(QWidget):
                 self.manager.add_circuit(self.client_id, circuit_id)
             self.manager.send_message(self.client_id, server_ip, server_port, payload, circuit_id)
 
+            threaded_analyzer = ThreadedCorrelationAnalyzer(self.analyzer)
+            # Run analysis
+            results = threaded_analyzer.run_threaded_analysis()
             
-            report = self.analyzer.generate_cumulative_attack_report()
-            print(report)
-
-            #deanonymized = self.analyzer.get_deanonymized_circuits()
-            #self.analyzer.get_info_compromised_nodes()
+            # Print report if available
+            threaded_analyzer.print_report()
+            
+            # Print deanonymized summary
+            summary = threaded_analyzer.get_deanonymized_summary()
+            if summary:
+                print(summary)
 
             self.append_log(f"Sending '{payload}' to {server_ip}:{server_port} via circuit {circuit_id}")
 

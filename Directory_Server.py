@@ -23,16 +23,17 @@ class DirectoryServer:
         self._make_network()
 
     def _make_network(self, num_guards=10, num_relays=10, num_exits=10, 
-                    guard_compromise_prob=1.0, relay_compromise_prob=1.0, exit_compromise_prob=1.0) -> List[Node]:
+                    guard_compromise_prob=0.8, relay_compromise_prob=0.5, exit_compromise_prob=0.8) -> List[Node]:
         first_port = 20000
         
         # create guards
         for i in range(num_guards):
             compromised = random.random() < guard_compromise_prob
+
             new_node = Node(
                 f'G{i}', 'guard', compromise=compromised, 
                 ip_address=self._random_ipv4(),
-                band_width=self._random_band_width(),
+                band_width=self._random_band_width(compromised),
                 owner=self._random_owner(),
                 port=first_port
             )
@@ -45,7 +46,7 @@ class DirectoryServer:
             new_node = Node(
                 f'R{i}', 'relay', compromise=compromised, 
                 ip_address=self._random_ipv4(),
-                band_width=self._random_band_width(),
+                band_width=self._random_band_width(compromised),
                 owner=self._random_owner(),
                 port=first_port
             )
@@ -58,7 +59,7 @@ class DirectoryServer:
             new_node = Node(
                 f'E{i}', 'exit', compromise=compromised, 
                 ip_address=self._random_ipv4(),
-                band_width=self._random_band_width(),
+                band_width=self._random_band_width(compromised),
                 owner=self._random_owner(),
                 port=first_port
             )
@@ -77,5 +78,8 @@ class DirectoryServer:
         list_owner=["Bob","Alice","Charlie","Diana","Eve"]
         return random.choice(list_owner)
 
-    def _random_band_width(self) -> int:
-        return random.choice([0, 1, 2])
+    def _random_band_width(self,compromised) -> int:
+        if compromised:
+            return (2)
+        else:
+            return random.choice([0, 1, 2])
