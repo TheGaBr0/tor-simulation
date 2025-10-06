@@ -127,11 +127,12 @@ class RectNode(QGraphicsRectItem):
 
 
 class BidirectionalArrow(QGraphicsPathItem):
-    def __init__(self, start_node, end_node, color, scene=None):
+    def __init__(self, start_node, end_node, color, offset=0, scene=None):
         super().__init__()
         self.start_node = start_node
         self.end_node = end_node
         self.arrow_size = 12
+        self.offset = offset  # Perpendicular offset for multiple arrows
 
         pen = QPen(QColor(color), 3)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -161,16 +162,25 @@ class BidirectionalArrow(QGraphicsPathItem):
         if length == 0:
             return
 
+        # Normalize direction vector
         dx /= length
         dy /= length
+
+        # Perpendicular vector for offset
+        perp_x = -dy
+        perp_y = dx
 
         start_radius = self.start_node.get_radius()
         end_radius = self.end_node.get_radius()
 
-        start_x = start_pos.x() + dx * start_radius
-        start_y = start_pos.y() + dy * start_radius
-        end_x = end_pos.x() - dx * end_radius
-        end_y = end_pos.y() - dy * end_radius
+        # Apply offset perpendicular to the line
+        offset_x = perp_x * self.offset
+        offset_y = perp_y * self.offset
+
+        start_x = start_pos.x() + dx * start_radius + offset_x
+        start_y = start_pos.y() + dy * start_radius + offset_y
+        end_x = end_pos.x() - dx * end_radius + offset_x
+        end_y = end_pos.y() - dy * end_radius + offset_y
 
         path = QPainterPath()
         path.moveTo(start_x, start_y)
@@ -201,7 +211,6 @@ class BidirectionalArrow(QGraphicsPathItem):
         ])
         path.addPolygon(arrow)
 
-
 class DynamicNetworkEditor(QGraphicsView):
     def __init__(self, circuits=None, hosts=None, guards=None, relays=None, exits=None, servers=None, bg_image=None):
         super().__init__()
@@ -211,6 +220,10 @@ class DynamicNetworkEditor(QGraphicsView):
         self.nodes = {}
         self.circuits = circuits if circuits is not None else defaultdict(list)
         self.circuit_arrows = defaultdict(list)
+        
+        # Track edge usage: (start_id, end_id) -> list of circuit_ids
+        self.edge_to_circuits = defaultdict(list)
+        self.arrow_offset_spacing = 8  # pixels between parallel arrows
 
         if bg_image:
             pixmap = QPixmap(bg_image)
@@ -226,7 +239,6 @@ class DynamicNetworkEditor(QGraphicsView):
         self._compute_positions()
         self._draw_nodes()
 
-    # Evidenzia nodi compromessi o selezionati
     def highlight_nodes(self, node_ids, color="#ff0000", thickness=4):
         for node_id in node_ids:
             node = self.nodes.get(node_id)
@@ -234,7 +246,6 @@ class DynamicNetworkEditor(QGraphicsView):
                 pen = QPen(QColor(color), thickness)
                 node.setPen(pen)
 
-    # Calcola le posizioni dei nodi per tipologia
     def _compute_positions(self):
         self.node_spacing = 80
         self.margin = 50
@@ -258,7 +269,6 @@ class DynamicNetworkEditor(QGraphicsView):
 
         self.x_positions = {'host': 0, 'guard': 300, 'relay': 600, 'exit': 900, 'server': 1200}
 
-    # Disegna i nodi
     def _draw_nodes(self):
         radius = 30
         square_size = 50
@@ -304,14 +314,12 @@ class DynamicNetworkEditor(QGraphicsView):
         self.scene.setSceneRect(min_x, min_y, max_x - min_x, max_y - min_y)
         self.centerOn((min_x + max_x) / 2, (min_y + max_y) / 2)
 
-    # Rende cliccabile un nodo
     def set_node_clickable(self, node_id, callback):
         if node_id in self.nodes:
             self.nodes[node_id].set_click_callback(callback)
 
-    # --- Nuova API per circuiti ---
     def draw_circuit(self, circuit_id, color="#2c3e50"):
-        """Disegna tutti i collegamenti del circuito"""
+        """Draw all edges of a circuit with proper offset for parallel arrows"""
         node_ids = self.circuits.get(circuit_id, [])
         if len(node_ids) < 2:
             return
@@ -321,20 +329,100 @@ class DynamicNetworkEditor(QGraphicsView):
             start_node = self.nodes.get(start_id)
             end_node = self.nodes.get(end_id)
             if start_node and end_node:
-                arrow = BidirectionalArrow(start_node, end_node, color, scene=self.scene)
+                # Calculate edge key (normalize direction)
+                edge = (start_id, end_id)
+                
+                # Track this circuit uses this edge
+                self.edge_to_circuits[edge].append(circuit_id)
+                
+                # Calculate offset based on how many circuits already use this edge
+                num_circuits = len(self.edge_to_circuits[edge])
+                offset = self._calculate_offset(num_circuits - 1, num_circuits)
+                
+                arrow = BidirectionalArrow(start_node, end_node, color, offset=offset, scene=self.scene)
                 arrows.append(arrow)
 
         self.circuit_arrows[circuit_id] = arrows
         self.scene.setSceneRect(self.scene.itemsBoundingRect().adjusted(-50, -50, 50, 50))
 
+    def _calculate_offset(self, index, total):
+        """Calculate perpendicular offset for arrow to avoid overlap"""
+        if total == 1:
+            return 0
+        
+        # Center the arrows around 0
+        base_offset = -(total - 1) * self.arrow_offset_spacing / 2
+        return base_offset + index * self.arrow_offset_spacing
+
     def remove_circuit(self, circuit_id):
-        """Rimuove tutti i collegamenti di un circuito"""
+        """Remove all edges of a circuit and reposition remaining arrows"""
         arrows = self.circuit_arrows.get(circuit_id, [])
+        
+        # Track which edges need repositioning
+        edges_to_update = set()
+        
         for arrow in arrows:
+            start_id = arrow.start_node.node_id
+            end_id = arrow.end_node.node_id
+            edge = (start_id, end_id)
+            
+            # Remove circuit from edge tracking
+            if edge in self.edge_to_circuits and circuit_id in self.edge_to_circuits[edge]:
+                self.edge_to_circuits[edge].remove(circuit_id)
+                edges_to_update.add(edge)
+                
+                # Clean up empty entries
+                if not self.edge_to_circuits[edge]:
+                    del self.edge_to_circuits[edge]
+            
+            # Remove arrow from nodes
             if hasattr(arrow.start_node, 'arrows'):
-                arrow.start_node.arrows.remove(arrow)
+                if arrow in arrow.start_node.arrows:
+                    arrow.start_node.arrows.remove(arrow)
             if hasattr(arrow.end_node, 'arrows'):
-                arrow.end_node.arrows.remove(arrow)
+                if arrow in arrow.end_node.arrows:
+                    arrow.end_node.arrows.remove(arrow)
+            
+            # Remove from scene
             self.scene.removeItem(arrow)
+        
+        # Remove circuit arrows entry
         if circuit_id in self.circuit_arrows:
             del self.circuit_arrows[circuit_id]
+        
+        # Reposition remaining arrows on affected edges
+        self._reposition_arrows_on_edges(edges_to_update)
+
+    def _reposition_arrows_on_edges(self, edges):
+        """Recalculate offsets for all arrows on given edges"""
+        for edge in edges:
+            if edge not in self.edge_to_circuits:
+                continue
+            
+            circuits = self.edge_to_circuits[edge]
+            total = len(circuits)
+            
+            for i, cid in enumerate(circuits):
+                arrows = self.circuit_arrows.get(cid, [])
+                for arrow in arrows:
+                    if (arrow.start_node.node_id, arrow.end_node.node_id) == edge:
+                        # Update offset and redraw
+                        arrow.offset = self._calculate_offset(i, total)
+                        arrow.update_position()
+
+    def remove_edge_arrows(self, start_id, end_id):
+        """Remove all arrows connecting start_id -> end_id from the scene"""
+        edge = (start_id, end_id)
+        
+        # Find all circuits using this edge
+        circuits_to_remove = []
+        for circuit_id, arrows in list(self.circuit_arrows.items()):
+            for arrow in list(arrows):
+                if (arrow.start_node.node_id == start_id and 
+                    arrow.end_node.node_id == end_id):
+                    circuits_to_remove.append(circuit_id)
+                    break
+        
+        # Remove each circuit (this will handle cleanup properly)
+        for circuit_id in circuits_to_remove:
+            self.remove_circuit(circuit_id)
