@@ -538,7 +538,7 @@ class Node:
             try:
                 while True:
                     x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(pub_key)
-                    create_cell = TorCell(circid=(99).to_bytes(2, 'big'),
+                    create_cell = TorCell(circid=(-1).to_bytes(2, 'big'),
                                         cmd=TorCommands.CREATE,
                                         data=encode_payload([g_x1_bytes_encrypted]))
                     sock.sendall(create_cell.to_bytes())
