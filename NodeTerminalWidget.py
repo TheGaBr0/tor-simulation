@@ -11,7 +11,7 @@ class NodeTerminal(QWidget):
        - Log + commands for exit nodes
     """
 
-    def __init__(self, node):
+    def __init__(self, node, dir_server):
         super().__init__()
         self.node = node
         self.node_id = node.id
@@ -19,7 +19,7 @@ class NodeTerminal(QWidget):
         self.node_type = node.type  # 🔹 relay, guard, exit, etc.
         self.compromised = node.compromised
         self.redirection = node.redirection
-
+        self.dir_server = dir_server
         self.setWindowTitle(f"Node Terminal - {node.id}")
         self.resize(700, 500)
 
@@ -132,14 +132,24 @@ class NodeTerminal(QWidget):
                 return
             server_ip, server_port, amount = args
 
+            pub_key = None
+            for node in self.dir_server.guards+self.dir_server.relays+self.dir_server.exits:
+                if node.ip == server_ip and node.port == int(server_port):
+                    pub_key = node.pub
+                    break
+
             self.append_log(f"[Exit {self.node_id}] Flooding {amount} to {server_ip}:{server_port}")
 
-            t = threading.Thread(
-                target=self.node._flood_circuit,
-                args=(server_ip, int(server_port), int(amount), 0.01),
-                daemon=True   # optional: won't block process exit
-            )
-            t.start()
+
+            for _ in range(10):  # 10 threads flooding
+                t = threading.Thread(
+                    target=self.node._flood_circuit,
+                    args=(server_ip, int(server_port), int(amount), pub_key),
+                    daemon=True   # optional: won't block process exit
+                )
+                t.start()
+                
+
 
         elif command == "help":
             self.append_log("Available commands (exit only):")

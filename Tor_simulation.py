@@ -147,12 +147,12 @@ class EntityConnectionManager:
 
         client.manager = self
 
-    def register_node(self, node):
+    def register_node(self, node, dir_server):
         """Register server/relay/guard/exit node with log terminal.
         node_type: 'guard', 'relay', 'exit', etc. If 'exit', the NodeTerminal
         will allow commands (e.g. redirect).
         """
-        terminal = NodeTerminal(node)
+        terminal = NodeTerminal(node, dir_server)
         self.terminals[node.id] = terminal
        
 
@@ -549,15 +549,15 @@ def main():
     editor.set_node_clickable('C2', manager.on_client_click)
 
     for guard in dir_server.guards:
-        manager.register_node(guard)
+        manager.register_node(guard, dir_server)
         editor.set_node_clickable(guard.id, manager.on_node_click)
 
     for relay in dir_server.relays:
-        manager.register_node(relay)
+        manager.register_node(relay, dir_server)
         editor.set_node_clickable(relay.id, manager.on_node_click)
 
     for exit in dir_server.exits:
-        manager.register_node(exit)
+        manager.register_node(exit, dir_server)
         editor.set_node_clickable(exit.id, manager.on_node_click)
 
 

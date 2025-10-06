@@ -34,7 +34,7 @@ class Client:
         
         self.client_socket: Optional[socket.socket] = None
         self.persistent_connections: Dict[str, socket.socket] = {}
-        self.server_stream_circuit_map: Dict[str, (int, int)] = {} #Dict[socket.socket, (int, int)] = {} -> nella realtà per applicazioni
+        self.server_stream_circuit_map: Dict[str, List[(int, int)]] = defaultdict(list) #Dict[socket.socket, (int, int)] = {} -> nella realtà per applicazioni
 
         self.circuits = defaultdict(list)
         self.circuit_relays_map: Dict[int, List[int]] = defaultdict(list)
@@ -180,13 +180,12 @@ class Client:
         # Wait for destroy to propagate through the circuit
         time.sleep(2)
 
-        # Remove circuit-specific data
-        keys_to_remove = [key for key, value in self.server_stream_circuit_map.items() 
-                        if value[0] == circuit_id]
-        for key in keys_to_remove:
-            self.server_stream_circuit_map.pop(key)
+        # Remove tuples from each list where tuple[0] == circuit_id
+        for lst in self.server_stream_circuit_map.values():
+            # Filter in-place: keep only tuples whose first element != circuit_id
+            lst[:] = [tup for tup in lst if tup[0] != circuit_id]
 
-        self.circuit_relays_map.pop(circuit_id)
+        self.circuit_relays_map.pop(circuit_id, None)
 
         # Check if any other circuits are using the same guard connection
         other_circuits_using_guard = [
@@ -213,7 +212,8 @@ class Client:
             self.logger.info(f"Circuit id {circuit_id} mancante")
             return
 
-        if not self.server_stream_circuit_map or self.server_stream_circuit_map.get(f"{server_ip}:{server_port}")[0] != circuit_id:
+        value_list = self.server_stream_circuit_map.get(f"{server_ip}:{server_port}")
+        if not value_list or all(tup[0] != circuit_id for tup in value_list):            
             self.logger.info("Connessione con server...")
             success = self.enstablish_connection_with_server(server_ip, server_port, circuit_id)
             if(success):
@@ -228,10 +228,10 @@ class Client:
         
         payload = encode_payload([data_to_bytes(server_ip), data_to_bytes(server_port)])
 
-        used_stream_ids = {v[1] for v in self.server_stream_circuit_map.values()}
+        used_stream_ids = {item[1] for lst in self.server_stream_circuit_map.values() for item in lst}
         random_stream_id = self._random_stream_id(used_stream_ids)
 
-        self.server_stream_circuit_map[f"{server_ip}:{server_port}"] = (circuit_id, random_stream_id) 
+        self.server_stream_circuit_map[f"{server_ip}:{server_port}"].append((circuit_id, random_stream_id))
 
         relay = RelayCommands.BEGIN
         streamid = data_to_bytes(data_to_bytes(random_stream_id))
@@ -255,21 +255,32 @@ class Client:
     def send_message_to_server(self, server_ip: str, server_port: int, payload: str, circuit_id: int) -> bytes:
         payload = encode_payload([data_to_bytes(payload)])
 
-        circid, streamid = self.server_stream_circuit_map.get(f"{server_ip}:{server_port}")
+        key = f"{server_ip}:{server_port}"
+        streamid = None
 
+        tuple_list = self.server_stream_circuit_map.get(key, [])
+
+        for tup in tuple_list:
+            if tup[0] == circuit_id:
+                streamid = tup[1]
+                break
+
+        if streamid is None:
+            # circuit_id not found
+            raise ValueError(f"Circuit ID {circuit_id} not found for {key}")
 
         relay = RelayCommands.DATA
         streamid = data_to_bytes(streamid)
-        digest = calculate_digest(self.circuit_relays_map[circid][-1])
+        digest = calculate_digest(self.circuit_relays_map[circuit_id][-1])
         payload = payload
 
-        for K in self.circuit_relays_map[circid]:
+        for K in self.circuit_relays_map[circuit_id]:
             relay, _ = aes_ctr_encrypt(relay, K, "forward")
             streamid, _ = aes_ctr_encrypt(streamid, K, "forward")
             digest, _ = aes_ctr_encrypt(digest, K, "forward")
             payload, _ = aes_ctr_encrypt(payload, K, "forward")
         
-        relay_cell = TorCell(circid=circid, cmd=TorCommands.RELAY, relay=relay, 
+        relay_cell = TorCell(circid=circuit_id, cmd=TorCommands.RELAY, relay=relay, 
                             streamid=streamid, digest=digest, data=payload)
         
         
