@@ -421,8 +421,8 @@ class Client:
 
 
     def _select_best_node(self, nodes: list[Node], 
-                     bandwidth_weight: float = 0.7,
-                     uptime_weight: float = 0.3,
+                     bandwidth_weight: float = 0.9,
+                     uptime_weight: float = 0.1,
                      top_n: int = 3) -> Node:
         """
         Select the best node from a list based on weighted bandwidth and uptime.
