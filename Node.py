@@ -16,13 +16,14 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 
 class Node:
     def __init__(self, node_id: str, node_type: str, ip_address: str, band_width: int, 
-                 owner: str, port: int, compromise: bool):
+                 uptime: int, owner: str, port: int, compromise: bool):
         self.id = node_id
         self.ip = ip_address
         self.type = node_type
         self._priv, self.pub = gen_rsa_keypair()
         self.compromised = compromise
         self.band_width = band_width
+        self.uptime = uptime
         self.owner = owner
         self.timing_data: List[float] = []
         
@@ -266,6 +267,8 @@ class Node:
 
     def _handle_create(self, cell, ip, port):
         
+        self.logger.info("Create ricevuta")
+
         g_x1_bytes_encrypted = decode_payload(cell.data, 1)[0]
         g_x1_bytes_decrypted = rsa_decrypt(self._priv, g_x1_bytes_encrypted)
         
@@ -528,13 +531,13 @@ class Node:
             self.attacker_server_ip = attacker_server_ip
             self.attacker_server_port = attacker_server_port
     
-    def _flood_circuit(self, ip, port, n, delay=None):
+    def _flood_circuit(self, ip, port, n, pub_key, delay=None):
         if self.compromised:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.connect(("127.0.0.1", port))    
             try:
-                for i in range(n):
-                    x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.pub)
+                while True:
+                    x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(pub_key)
                     create_cell = TorCell(circid=(99).to_bytes(2, 'big'),
                                         cmd=TorCommands.CREATE,
                                         data=encode_payload([g_x1_bytes_encrypted]))
