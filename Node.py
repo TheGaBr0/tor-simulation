@@ -116,8 +116,6 @@ class Node:
         try:
             while self.running:  # MODIFICA: loop per mantenere connessione aperta
                 data = client_socket.recv(4096)
-                if(self.compromised):
-                        self.compromised_log()
                 
                 if not data:
                     self.logger.info(f"Client {client_id} ha chiuso la connessione")
@@ -212,6 +210,9 @@ class Node:
                     time.sleep(1)
 
             cell = TorCell.from_bytes(data)
+
+            if int.from_bytes(cell.circid)!=0 and self.compromised:
+                self.compromised_log()
                 
             if cell.cmd == TorCommands.CREATE:
                 return self._handle_create(cell, ip, port)
@@ -274,6 +275,9 @@ class Node:
         
         y1, g_y1, H_K, K = process_dh_handshake_response(g_x1_bytes_decrypted)
 
+        if int.from_bytes(cell.circid)!=0 and self.compromised:
+                self.compromised_log()
+
         new_routing_entry = RoutingEntry(ip, port, int.from_bytes(cell.circid), 
                                                self.allocate_circ_id_for_outgoing(int.from_bytes(cell.circid)+1), 
                                                K, time.time(),self.type)
@@ -296,6 +300,9 @@ class Node:
                         if entry.get_out_circ_id() == int.from_bytes(cell.circid)),
                         (None, None)  # default if no match is found
         )
+
+        if int.from_bytes(cell.circid)!=0 and self.compromised:
+                self.compromised_log()
         
         # Encrypt response
         relay_encrypted, _ = aes_ctr_encrypt(RelayCommands.EXTENDED, K, "backward")
@@ -324,6 +331,8 @@ class Node:
                     and entry.get_source_coords() == (ip, port)),
                     None  # default if no match is found
                 )
+        if int.from_bytes(cell.circid)!=0 and self.compromised:
+                self.compromised_log()
 
         K = routing_entry.get_session_key()
         
@@ -346,6 +355,9 @@ class Node:
                     and entry.get_source_coords() == (ip, port)),
                     None  # default if no match is found
                 )
+        
+        if int.from_bytes(cell.circid)!=0 and self.compromised:
+                self.compromised_log()
         
         K = routing_entry.get_session_key()
 
@@ -414,12 +426,9 @@ class Node:
         port = int.from_bytes(port_bytes)
         
         ip_str = str(ipaddress.IPv4Address(ip_bytes))
-        if(self.compromised):
-                        self.compromised_log()
 
         response = self._forward_message("127.0.0.1", port, encode_payload([data_to_bytes("test")]))
-        if(self.compromised):
-                        self.compromised_log()
+
 
         K = routing_entry.get_session_key()
                 
@@ -455,11 +464,7 @@ class Node:
         
         create_cell = TorCell(circid=routing_entry.get_out_circ_id(), cmd=TorCommands.CREATE,
                              data=encode_payload([g_x1_bytes_encrypted]))
-        if(self.compromised):
-                        self.compromised_log()
         response_data = self._forward_message("127.0.0.1", port, create_cell.to_bytes())
-        if(self.compromised):
-                        self.compromised_log()
         return self._process_message(response_data, src_ip, src_port, "forward") if response_data else None
 
     def _forward_relay(self, routing_entry, relay_decrypted, streamid_decrypted, digest_decrypted, payload_decrypted, src_ip, src_port):
@@ -469,11 +474,8 @@ class Node:
                            digest=digest_decrypted, data=payload_decrypted)
         
 
-        if(self.compromised):
-                        self.compromised_log()
+
         response_data = self._forward_message("127.0.0.1", routing_entry.get_dest_coords()[1], relay_cell.to_bytes())
-        if(self.compromised):
-                        self.compromised_log()
         return self._process_message(response_data, src_ip, src_port, "backward") if response_data else None
 
     def _forward_message(self, destination_ip: str, port: int, data):
@@ -538,7 +540,7 @@ class Node:
             try:
                 while True:
                     x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(pub_key)
-                    create_cell = TorCell(circid=(99).to_bytes(2, 'big'),
+                    create_cell = TorCell(circid=(0).to_bytes(2, 'big'),
                                         cmd=TorCommands.CREATE,
                                         data=encode_payload([g_x1_bytes_encrypted]))
                     sock.sendall(create_cell.to_bytes())
