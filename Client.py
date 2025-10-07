@@ -11,10 +11,13 @@ import random
 import logging
 import socket
 from TorMessage import *
-import json
 from collections import defaultdict
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] (%(name)s) %(levelname)s: %(message)s',
+    datefmt='%H:%M:%S'
+)
 
 class Client:
     def __init__(self, id: str, ip: str, port: int, listen_port: int, nodes, choice_algorithm='default'):
@@ -51,52 +54,49 @@ class Client:
         return self.circuits.get(circuit_id)[-1]
 
     def determine_route(self, circuit_id):
-     
-        self.logger.info(f"Determinando il percorso di {self.len_of_circuit} nodi...")
-
+        self.logger.info(f"Selecting a {self.len_of_circuit}-hop circuit route...")
         circuit = self.build_circuit()
 
-        self.circuits[circuit_id].append(circuit[0])
-        for relay in circuit[1:-1]:
-            self.circuits[circuit_id].append(relay)
-        self.circuits[circuit_id].append(circuit[-1])
+        self.circuits[circuit_id].extend(circuit)
         
-        relay_info = '\n - '.join([str(relay) for relay in self.get_relays(circuit_id)])
-        self.logger.info(f"Percorso scelto: \n - {self.get_guard(circuit_id)}\n - {relay_info}\n - {self.get_exit(circuit_id)}")
+        route_str = "\n    → ".join([f"{n.type.upper()} [{n.ip}:{n.port}] ({n.owner})" for n in circuit])
+        self.logger.info(f"Circuit #{circuit_id} route established:\n    → {route_str}")
 
 
     def establish_circuit(self, circuit_id):
-        # Handshake with guard
+        self.logger.info(f"Establishing circuit #{circuit_id} handshake sequence...")
+        
         if not self._handshake_guard(circuit_id):
-            self.logger.warning("Errore nell'handshake con guard")
+            self.logger.warning("Guard handshake failed — aborting circuit setup.")
+            return False
+        if not self._handshake_relay(circuit_id):
+            self.logger.warning("Relay handshake failed — aborting circuit setup.")
+            return False
+        if not self._handshake_exit(circuit_id):
+            self.logger.warning("Exit handshake failed — aborting circuit setup.")
             return False
         
-        # Handshake with relay
-        if not self._handshake_relay(circuit_id):
-            self.logger.warning("Errore nell'handshake con relay")
-            return False
-            
-        # Handshake with exit
-        if not self._handshake_exit(circuit_id):
-            self.logger.warning("Errore nell'handshake con exit")
-            return False
-
+        self.logger.info(f"Circuit #{circuit_id} established successfully with {self.len_of_circuit} hops.")
         return True
+
     
 
     def _handshake_guard(self, circuit_id):
-        
+        self.logger.info(f"Performing Diffie–Hellman handshake with guard node {self.get_guard(circuit_id).ip}:{self.get_guard(circuit_id).port}...")
         x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.get_guard(circuit_id).pub)
         self.g_x1, self.x1 = g_x1, x1
         create_cell = TorCell(circid=circuit_id, cmd=TorCommands.CREATE, data=encode_payload([g_x1_bytes_encrypted]))
         
         success = self._send_request("127.0.0.1", self.get_guard(circuit_id).port, create_cell.to_bytes())
-        self.logger.info("Handshake con guard " + ("completato" if success else "fallito"))
+
+        if success:
+            self.logger.info("Handshake with guard succedeed")
         return success
 
     def _handshake_relay(self, circuit_id):
 
         for i, node in enumerate(self.get_relays(circuit_id)):
+            self.logger.info(f"Extending circuit through relay {i+1} ({node.ip}:{node.port})...")
             x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(node.pub)
             self.g_x1, self.x1 = g_x1, x1
             
@@ -121,11 +121,12 @@ class Client:
             if not success:
                 return success
             else:
-                self.logger.info(f"Handshake con relay {i+1} {'completato' if success else 'fallito'}")
+                self.logger.info(f"Relay {i+1} extension succeeded.")
         
         return success
 
     def _handshake_exit(self, circuit_id):
+        self.logger.info(f"Extending circuit to exit node {self.get_exit(circuit_id).ip}:{self.get_exit(circuit_id).port}...")
         x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.get_exit(circuit_id).pub)
         self.g_x1, self.x1 = g_x1, x1
         
@@ -146,26 +147,32 @@ class Client:
                             streamid=streamid, digest=digest, data=payload)
         
         success = self._send_request("127.0.0.1", self.get_guard(circuit_id).port, relay_cell.to_bytes())
-        self.logger.info("Handshake con exit " + ("completato" if success else "fallito"))
+        
+        if success:
+            self.logger.info("Exit node handshake completed.")
 
         return success
 
-    def connect_to_tor_network(self, circuit_id, len_of_circuit = 3):
-
+    def connect_to_tor_network(self, circuit_id, len_of_circuit=3):
         if circuit_id in self.circuits:
-            self.logger.warning(f"Circuit id {circuit_id} già usato")
+            self.logger.warning(f"Circuit ID {circuit_id} already exists. Skipping new connection.")
             return
-        
         self.len_of_circuit = len_of_circuit
-
-        self.determine_route(circuit_id)
+        self.logger.info(f"Connecting to Tor network with {len_of_circuit}-hop circuit...")
         
+        self.determine_route(circuit_id)
         self.handshake_enstablished = self.establish_circuit(circuit_id)
+        
+        if self.handshake_enstablished:
+            self.logger.info(f"Connection to Tor network established via circuit #{circuit_id}.")
+        else:
+            self.logger.error(f"Failed to connect to Tor network (circuit #{circuit_id}).")
         return self.handshake_enstablished
+
     
     def destroy_circuit(self, circuit_id):
 
-        self.logger.info(f"Destroying circuit {circuit_id}...")
+        self.logger.info(f"Tearing down circuit #{circuit_id}...")
 
         destroy_cell = TorCell(circid=circuit_id, cmd=TorCommands.DESTROY, data=b'null')
         sock = self.persistent_connections.get(f"127.0.0.1:{self.get_guard(circuit_id).port}")
@@ -197,27 +204,28 @@ class Client:
         if not other_circuits_using_guard:
             self.persistent_connections.pop(f"127.0.0.1:{self.get_guard(circuit_id).port}", None)
             sock.close()
-            self.logger.info(f"Closed connection to guard (no other circuits using it)")
+            print(f"Closed connection to guard (no other circuits using it)")
         else:
-            self.logger.info(f"Keeping connection to guard (other circuits: {other_circuits_using_guard})")
+            print(f"Keeping connection to guard (other circuits: {other_circuits_using_guard})")
 
         self.circuits.pop(circuit_id)
 
-        self.logger.info(f"Circuit {circuit_id} destroyed")
+        self.logger.info(f"Circuit #{circuit_id} destroyed successfully.")
         return True
 
     def send_message_to_tor_network(self, server_ip: str, server_port: int, payload: str, circuit_id: int):
 
         if circuit_id not in self.circuits:
-            self.logger.info(f"Circuit id {circuit_id} mancante")
+            self.logger.warning(f"Circuit #{circuit_id} not found. Message aborted.")
             return
 
         value_list = self.server_stream_circuit_map.get(f"{server_ip}:{server_port}")
         if not value_list or all(tup[0] != circuit_id for tup in value_list):            
-            self.logger.info("Connessione con server...")
             success = self.enstablish_connection_with_server(server_ip, server_port, circuit_id)
             if(success):
-                self.logger.info("Connessione con server avvenuta con successo, invio dati")
+                self.logger.info(f"Sending application data through circuit #{circuit_id} to {server_ip}:{server_port}...")
+            else:
+                self.logger.info(f"Couldn't enstablish connection through circuit #{circuit_id} to {server_ip}:{server_port}...")
         else:
             success = True
 
@@ -288,8 +296,8 @@ class Client:
 
     def _send_request(self, server_ip: str, server_port: int, payload: bytes) -> bool:
         destination_key = f"{server_ip}:{server_port}"
-        
-        # AGGIUNTA: riutilizza connessione esistente se disponibile
+        self.logger.debug(f"Sending Tor cell to {destination_key}...")
+
         if destination_key in self.persistent_connections:
             try:
                 sock = self.persistent_connections[destination_key]
@@ -297,6 +305,7 @@ class Client:
                 response_data = sock.recv(1000000)
                 
                 if response_data:
+                    self.logger.debug(f"Received response from {destination_key}")
                     return self._process_message(response_data)
                 else:
                     self.logger.warning("No response received from existing connection")
@@ -320,6 +329,7 @@ class Client:
             response_data = sock.recv(1000000)
             
             if response_data:
+                self.logger.debug(f"Received response from {destination_key}")
                 return self._process_message(response_data)
             else:
                 self.logger.warning("No response received from server")
@@ -347,8 +357,11 @@ class Client:
 
             cell = TorCell.from_bytes(data)
             
-
+            circ_id = int.from_bytes(cell.circid)
+            
             if cell.cmd == TorCommands.CREATED:
+                self.logger.info(f"[Circuit {circ_id}] Received CREATED cell.")
+
                 decoded_payload = decode_payload(cell.data, 2)
                 g_y1_bytes, H_K1_toCheck = decoded_payload[0], decoded_payload[1]
                 
@@ -361,7 +374,8 @@ class Client:
             
             if cell.cmd == TorCommands.RELAY:
                 relay, streamid, digest, data = cell.relay_command, cell.streamid, cell.digest, cell.data
-                
+                self.logger.debug(f"[Circuit {circ_id}] Received RELAY cell. Attempting layered decryption...")
+
 
                 keys_list = [k for k in self.circuit_relays_map[int.from_bytes(cell.circid)]]
 
@@ -391,13 +405,14 @@ class Client:
                 
                 match relay:
                     case RelayCommands.CONNECTED:
+                        self.logger.info(f"[Circuit {circ_id}] Received CONNECTED cell.")
                         return True
                     case RelayCommands.END:
+                        self.logger.warning(f"[Circuit {circ_id}] Received CONNECTED cell. Stream closed.")
                         return False
-
                     case RelayCommands.DATA:
-                        self.logger.info(decode_payload(data,1)[0].decode('utf-8'))
-                        self.logger.info(f"streamid: {int.from_bytes(streamid)} id: {int.from_bytes(cell.circid)}")
+                        message = decode_payload(data,1)[0].decode('utf-8')
+                        self.logger.info(f"[Circuit {circ_id}] Received DATA cell, message: {message}, stream id:  {int.from_bytes(streamid)}")
                         return True
 
                         
@@ -436,7 +451,7 @@ class Client:
         Returns:
             Randomly selected node from top N candidates
         
-        Raises:
+        Raises:+
             ValueError: If nodes list is empty
         """
         if not nodes:
