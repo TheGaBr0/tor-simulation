@@ -45,7 +45,7 @@ class TorCell:
         Args:
             circid: Circuit ID (int o 2 bytes) - se int, viene convertito automaticamente
             cmd: Command (1 byte) - usa TorCommands per determinare il tipo
-            data: Dati della cella
+            data: Dati della cella (deve essere già paddato alla dimensione corretta)
             relay: Relay command (1 byte, solo per celle relay)
             streamid: Stream ID (2 bytes, solo per celle relay)
             digest: Digest (6 bytes, solo per celle relay)
@@ -75,15 +75,11 @@ class TorCell:
             else:
                 self.length = self._ensure_bytes_length(length, self.LEN_SIZE)
             
-            # Assicura che i dati non superino la dimensione massima
-            self.data = data[:self.DATA_SIZE] if data else b''
-            # Padding dei dati se necessario
-            self.data = self.data.ljust(self.DATA_SIZE, b'\x00')
+            # Store data without automatic padding
+            self.data = data
         else:
-            # Cella standard
-            self.data = data[:self.STANDARD_DATA_SIZE] if data else b''
-            # Padding dei dati se necessario
-            self.data = self.data.ljust(self.STANDARD_DATA_SIZE, b'\x00')
+            # Store data without automatic padding
+            self.data = data
     
     def _is_relay_cell(self) -> bool:
         """Helper interno per determinare se è una cella relay basato sul comando"""
@@ -231,11 +227,30 @@ class TorCell:
         """Restituisce sempre 512 bytes come da specifica Tor"""
         return 512
 
-def encode_payload(params: List[bytes]) -> bytes:
+def encode_payload(params: List[bytes], is_relay: bool = False) -> bytes:
     """
     Encode a list of byte parameters into a single payload using 4-byte length prefix.
+    Automatically pads to the correct size based on cell type.
+    
+    Args:
+        params: List of byte parameters to encode
+        is_relay: True for relay cells (498 bytes), False for standard cells (509 bytes)
+    
+    Returns:
+        bytes: Encoded payload, padded to the appropriate size
     """
     payload = b''.join(struct.pack('>I', len(p)) + p for p in params)
+    
+    # Determine target size based on cell type
+    target_size = TorCell.DATA_SIZE if is_relay else TorCell.STANDARD_DATA_SIZE
+    
+    if len(payload) > target_size:
+        # Truncate if too long
+        payload = payload[:target_size]
+    else:
+        # Pad with zeros if too short
+        payload = payload.ljust(target_size, b'\x00')
+    
     return payload
 
 def decode_payload(payload: bytes, num_params: int) -> List[bytes]:
@@ -277,6 +292,3 @@ def streamid_from_int(value: int) -> bytes:
 def length_from_int(value: int) -> bytes:
     """Convert length from int to bytes"""
     return int_to_bytes(value, 2)
-
-
-

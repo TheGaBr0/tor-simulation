@@ -11,8 +11,11 @@ from RoutingEntry import RoutingEntry
 import time
 from typing import Tuple
 
-# Larghezza di banda rappresentata dai valori: 0: bassa, 1. media, 2:alta
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] (%(name)s) %(levelname)s: %(message)s',
+    datefmt='%H:%M:%S'
+)
 
 class Node:
     def __init__(self, node_id: str, node_type: str, ip_address: str, band_width: int, 
@@ -41,17 +44,17 @@ class Node:
         self.logger = logging.getLogger(f"Nodo-{self.id}")
 
     def __str__(self):
-        bandwidth_labels = {0: "bassa", 1: "media", 2: "alta", 3: "ottima"}
+        bandwidth_labels = {0: "low", 1: "medium", 2: "high", 3: "excellent"}
         return (f"Node(id='{self.id}', type='{self.type}', ip='{self.ip}:{self.port}', "
-                f"bandwidth='{bandwidth_labels.get(self.band_width, 'sconosciuta')}', "
-                f"owner='{self.owner}', status='{'attivo' if self.running else 'inattivo'}', "
-                f"security='{'compromesso' if self.compromised else 'sicuro'}')")
+                f"bandwidth='{bandwidth_labels.get(self.band_width, 'unknown')}', "
+                f"owner='{self.owner}', status='{'active' if self.running else 'inactive'}', "
+                f"security='{'compromised' if self.compromised else 'normal'}')")
 
     def start(self):
         if self.running:
-            self.logger.warning("Nodo già attivo")
+            self.logger.warning("Node already running.")
             return
-            
+
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -61,12 +64,17 @@ class Node:
             
             self.server_thread = threading.Thread(target=self._node_loop, daemon=True)
             self.server_thread.start()
-            
+
+            status = "COMPROMISED" if self.compromised else "NORMAL"
+            self.logger.info(f"Node {self.id} started on {self.bind_ip}:{self.port} ({status})")
+            self.logger.debug(f"Public key (truncated): {self.pub[:60]}...")
+
         except Exception as e:
-            self.logger.error(f"Errore nell'avvio del nodo: {e}")
+            self.logger.error(f"Failed to start node: {e}", exc_info=True)
             self.stop()
 
     def stop(self):
+        self.logger.info(f"Stopping node {self.id}...")
         self.running = False
 
         for conn in self.persistent_connections.values():
@@ -76,72 +84,77 @@ class Node:
             except:
                 pass
         self.persistent_connections.clear()
-    
-        
+
         if self.server_socket:
             try:
                 self.server_socket.shutdown(socket.SHUT_RDWR)
                 self.server_socket.close()
             except Exception as e:
-                self.logger.debug(f"Errore chiusura server socket: {e}")
+                self.logger.debug(f"Error closing server socket: {e}")
             finally:
                 self.server_socket = None
-                
+
         if hasattr(self, 'server_thread') and self.server_thread.is_alive():
+            self.logger.debug("Waiting for server thread to terminate...")
             self.server_thread.join(timeout=2.0)
             if self.server_thread.is_alive():
-                self.logger.warning("Server thread non terminato entro timeout")
-                
-        self.logger.info("Nodo fermato")
+                self.logger.warning("Server thread did not terminate in time.")
+
+        self.logger.info(f"Node {self.id} stopped successfully.")
 
     def _node_loop(self):
+        self.logger.debug(f"Node {self.id} listening for incoming connections...")
         while self.running:
             try:
+                self.server_socket.settimeout(1.0)
                 client_socket, addr = self.server_socket.accept()
-                
-                client_thread = threading.Thread(target=self._handle_connection, 
-                                                args=(client_socket, addr), daemon=True)
+                self.logger.info(f"Accepted connection from {addr[0]}:{addr[1]}")
+
+                client_thread = threading.Thread(
+                    target=self._handle_connection,
+                    args=(client_socket, addr),
+                    daemon=True
+                )
                 client_thread.start()
             except socket.timeout:
                 continue
             except Exception as e:
                 if self.running:
-                    self.logger.error(f"Errore nel server loop: {e}")
+                    self.logger.error(f"Error in node loop: {e}", exc_info=True)
 
     def _handle_connection(self, client_socket: socket.socket, addr):
         client_id = f"{addr[0]}:{addr[1]}"
-        
+        self.logger.debug(f"Started connection handler for {client_id}")
         self.persistent_connections[client_id] = client_socket
 
         try:
-            while self.running:  # MODIFICA: loop per mantenere connessione aperta
-                data = client_socket.recv(4096)
-                
+            while self.running:
+                data = client_socket.recv(512)
                 if not data:
-                    self.logger.info(f"Client {client_id} ha chiuso la connessione")
+                    self.logger.info(f"Client {client_id} disconnected.")
                     break
-                    
+
+                self.logger.debug(f"Received {len(data)} bytes from {client_id}")
                 response_data = self._process_message(data, addr[0], addr[1], "forward")
 
                 if response_data:
-
                     client_socket.sendall(response_data)
+                    self.logger.debug(f"Sent {len(response_data)} bytes to {client_id}")
 
-                    if(self.compromised):
+                    if self.compromised:
                         self.compromised_log()
-                
         except socket.timeout:
-            self.logger.error(f"Timeout gestione client {client_id}")
+            self.logger.warning(f"Timeout while handling client {client_id}")
         except Exception as e:
-            self.logger.error(f"Errore gestione client {client_id}: {e}")
+            self.logger.error(f"Error while handling client {client_id}: {e}", exc_info=True)
         finally:
             if client_id in self.persistent_connections:
                 del self.persistent_connections[client_id]
             try:
                 client_socket.close()
-                self.logger.info(f"Connessione chiusa con {client_id}")
+                self.logger.debug(f"Closed connection with {client_id}")
             except Exception as e:
-                self.logger.debug(f"Errore chiusura connessione con {client_id}: {e}")
+                self.logger.debug(f"Error closing connection with {client_id}: {e}")
 
     def remove_circuit(self, routing_entry):
         affected_sockets = set()
@@ -221,7 +234,6 @@ class Node:
             elif cell.cmd == TorCommands.RELAY:
                 return self._handle_relay(cell, ip, port, direction)
             elif cell.cmd == TorCommands.DESTROY:
-                
                 routing_entry = next(
                     (entry for entry in self.routing_table
                     if entry.get_in_circ_id() == int.from_bytes(cell.circid)
@@ -241,7 +253,7 @@ class Node:
 
                     self.remove_circuit(routing_entry)
 
-                    self.logger.info("Destroyed...")
+                    self.logger.info(f"Circuit {cell.circid} destroyed")
 
 
                 else:
@@ -258,7 +270,7 @@ class Node:
                     # Now safely remove them
                     for key in keys_to_remove:
                         self.circuit_stream_socket_map.pop(key)
-                    self.logger.info("Destroyed...")
+                    self.logger.info(f"Circuit {cell.circid} destroyed")
 
 
                 
@@ -267,29 +279,39 @@ class Node:
         return None
 
     def _handle_create(self, cell, ip, port):
-        
-        self.logger.info("Create ricevuta")
 
+        self.log_packet(cell)
+
+        # Check if we've reached maximum circuits
+        if len(self.routing_table) >= 100:
+            self.logger.critical("Resources exhausted, entering protection mode")
+            self.stop()
+            return None  # or raise an exception
+        
         g_x1_bytes_encrypted = decode_payload(cell.data, 1)[0]
         g_x1_bytes_decrypted = rsa_decrypt(self._priv, g_x1_bytes_encrypted)
         
         y1, g_y1, H_K, K = process_dh_handshake_response(g_x1_bytes_decrypted)
 
-        if int.from_bytes(cell.circid)!=0 and self.compromised:
-                self.compromised_log()
+        self.logger.info(f"Diffie-Hellman handshake completed. Session key derived successfully.")
+
+        if int.from_bytes(cell.circid) != 0 and self.compromised:
+            self.compromised_log()
 
         new_routing_entry = RoutingEntry(ip, port, int.from_bytes(cell.circid), 
-                                               self.allocate_circ_id_for_outgoing(int.from_bytes(cell.circid)+1), 
-                                               K, time.time(),self.type)
+                                        self.allocate_circ_id_for_outgoing(int.from_bytes(cell.circid)+1), 
+                                        K, time.time(), self.type)
         self.routing_table.append(new_routing_entry)
 
         created_cell = TorCell(circid=new_routing_entry.get_in_circ_id(), cmd=TorCommands.CREATED,
-                              data=encode_payload([data_to_bytes(g_y1), H_K]))
+                            data=encode_payload([data_to_bytes(g_y1), H_K]))
 
         return created_cell.to_bytes()
     
 
     def _handle_created(self, cell,ip, port):
+
+        self.log_packet(cell)
         
         decoded_payload = decode_payload(cell.data, 2)
         g_y1_bytes, H_K_TO_BE_FORWARDED = decoded_payload[0], decoded_payload[1]
@@ -308,12 +330,11 @@ class Node:
         relay_encrypted, _ = aes_ctr_encrypt(RelayCommands.EXTENDED, K, "backward")
         streamid_encrypted, _ = aes_ctr_encrypt(data_to_bytes(0), K, "backward")
         digest_encrypted, _ = aes_ctr_encrypt(calculate_digest(K), K, "backward")
-        payload_encrypted, _ = aes_ctr_encrypt(encode_payload([g_y1_bytes, H_K_TO_BE_FORWARDED]), K, "backward")
+        payload_encrypted, _ = aes_ctr_encrypt(encode_payload([g_y1_bytes, H_K_TO_BE_FORWARDED], is_relay=True), K, "backward")
         
         relay_cell = TorCell(circid=in_circ_id, cmd=TorCommands.RELAY, relay=relay_encrypted,
                            streamid=streamid_encrypted, digest=digest_encrypted, data=payload_encrypted)
         
-
         return relay_cell.to_bytes()
 
     def _handle_relay(self, cell, ip, port, direction):
@@ -324,6 +345,7 @@ class Node:
         else: return None
 
     def _handle_relay_backward(self, cell, ip, port):
+        self.logger.info(f"[Circuit {int.from_bytes(cell.circid)}] Processing RELAY backward cell")
         
         routing_entry = next(
                     (entry for entry in self.routing_table
@@ -331,6 +353,9 @@ class Node:
                     and entry.get_source_coords() == (ip, port)),
                     None  # default if no match is found
                 )
+        
+        self.log_packet(cell, routing_entry)
+
         if int.from_bytes(cell.circid)!=0 and self.compromised:
                 self.compromised_log()
 
@@ -344,10 +369,11 @@ class Node:
         relay_cell = TorCell(circid=routing_entry.get_in_circ_id(), cmd=TorCommands.RELAY,
                            relay=relay_encrypted, streamid=streamid_encrypted,
                            digest=digest_encrypted, data=payload_encrypted)
+        
         return relay_cell.to_bytes()
 
     def _handle_relay_forward(self, cell, ip, port):
-
+        self.logger.info(f"[Circuit {int.from_bytes(cell.circid)}] Processing RELAY forward cell")
         # Find session key and decrypt
         routing_entry = next(
                     (entry for entry in self.routing_table
@@ -360,6 +386,8 @@ class Node:
                 self.compromised_log()
         
         K = routing_entry.get_session_key()
+        
+        self.log_packet(cell, routing_entry)
 
         relay_decrypted = aes_ctr_decrypt(cell.relay_command, K, "forward")
         streamid_decrypted = aes_ctr_decrypt(cell.streamid, K, "forward")
@@ -382,9 +410,9 @@ class Node:
                             sock.settimeout(2)  # avoid hanging forever
                             sock.connect(("127.0.0.1", self.attacker_server_port))
                             self.persistent_connections[destination_key] = sock
-                            self.logger.info(f"[Exit {self.id}] Connected redirect socket to {destination_key}")
+                            self.logger.info(f"Connected redirect socket to {destination_key}")
                         except Exception as e:
-                            self.logger.error(f"[Exit {self.id}] Redirect connection failed: {e}")
+                            self.logger.error(f"Redirect connection failed: {e}")
                             return None
 
                     dst_socket = self.persistent_connections[destination_key]
@@ -396,7 +424,7 @@ class Node:
                         self.compromised_log()
                         
                 dst_socket.send(payload_decrypted)  
-                response_data = dst_socket.recv(1000000)
+                response_data = dst_socket.recv(512)
                 if(self.compromised):
                         self.compromised_log()
                 if response_data:
@@ -404,12 +432,21 @@ class Node:
                     relay_encrypted, _ = aes_ctr_encrypt(RelayCommands.DATA, K, "backward")
                     streamid_encrypted, _ = aes_ctr_encrypt(streamid_decrypted, K, "backward")
                     digest_encrypted, _ = aes_ctr_encrypt(calculate_digest(K), K, "backward")
-                    payload_encrypted, _ = aes_ctr_encrypt(response_data, K, "backward")
+                    payload_encrypted, _ = aes_ctr_encrypt(encode_payload([response_data], is_relay=True), K, "backward")
                     
                     # Create RELAY DATA cell with server response
-                    data_cell = TorCell(circid=routing_entry.get_in_circ_id(), cmd=TorCommands.RELAY, 
+                    data_cell = TorCell(circid=routing_entry.get_in_circ_id()+1, cmd=TorCommands.RELAY, #just for logging
                                     relay=relay_encrypted, streamid=streamid_encrypted,
                                     digest=digest_encrypted, data=payload_encrypted)
+                    
+                    self.logger.info(f"[Circuit {int.from_bytes(cell.circid)}] Sending RELAY answer back to client")
+
+                    self.log_packet(data_cell, routing_entry)
+
+                    data_cell = TorCell(circid=routing_entry.get_in_circ_id(), cmd=TorCommands.RELAY, #just for logging
+                                    relay=relay_encrypted, streamid=streamid_encrypted,
+                                    digest=digest_encrypted, data=payload_encrypted)
+
                     return data_cell.to_bytes()
                 else:
                     return None
@@ -434,7 +471,7 @@ class Node:
                 
         streamid_encrypted, _ = aes_ctr_encrypt(streamid, K, "backward")
         digest_encrypted, _ = aes_ctr_encrypt(calculate_digest(K), K, "backward")
-        payload_encrypted, _ = aes_ctr_encrypt(response, K, "backward")
+        payload_encrypted, _ = aes_ctr_encrypt(encode_payload([response], is_relay=True), K, "backward")
 
         
         if response:
@@ -443,14 +480,26 @@ class Node:
             self.circuit_stream_socket_map[(routing_entry.get_in_circ_id(), int.from_bytes(streamid))] = self.persistent_connections.get(f"{ip}:{port}")
 
             relay_encrypted, _ = aes_ctr_encrypt(RelayCommands.CONNECTED, K, "backward")
+            connected_cell = TorCell(circid=routing_entry.get_in_circ_id()+1, cmd=TorCommands.RELAY, relay=relay_encrypted,  #just for logging
+                            streamid=streamid_encrypted, digest=digest_encrypted, data=payload_encrypted)
+            
+            self.log_packet(connected_cell, routing_entry)
+
             connected_cell = TorCell(circid=routing_entry.get_in_circ_id(), cmd=TorCommands.RELAY, relay=relay_encrypted,
                             streamid=streamid_encrypted, digest=digest_encrypted, data=payload_encrypted)
+
             return connected_cell.to_bytes()
         else:
             self.logger.info("Connessione con server fallita: inoltro END")
             relay_encrypted, _ = aes_ctr_encrypt(RelayCommands.END, K, "backward")
+            end_cell = TorCell(circid=routing_entry.get_in_circ_id()+1, cmd=TorCommands.RELAY, relay=relay_encrypted, #just for logging
+                            streamid=streamid_encrypted, digest=digest_encrypted, data=payload_encrypted)
+            
+            self.log_packet(end_cell, routing_entry)
+
             end_cell = TorCell(circid=routing_entry.get_in_circ_id(), cmd=TorCommands.RELAY, relay=relay_encrypted,
                             streamid=streamid_encrypted, digest=digest_encrypted, data=payload_encrypted)
+
             return end_cell.to_bytes()
 
     def _forward_create(self, routing_entry, payload_decrypted, src_ip, src_port):
@@ -464,6 +513,7 @@ class Node:
         
         create_cell = TorCell(circid=routing_entry.get_out_circ_id(), cmd=TorCommands.CREATE,
                              data=encode_payload([g_x1_bytes_encrypted]))
+        
         response_data = self._forward_message("127.0.0.1", port, create_cell.to_bytes())
         return self._process_message(response_data, src_ip, src_port, "forward") if response_data else None
 
@@ -473,8 +523,6 @@ class Node:
                            relay=relay_decrypted, streamid=streamid_decrypted,
                            digest=digest_decrypted, data=payload_decrypted)
         
-
-
         response_data = self._forward_message("127.0.0.1", routing_entry.get_dest_coords()[1], relay_cell.to_bytes())
         return self._process_message(response_data, src_ip, src_port, "backward") if response_data else None
 
@@ -508,7 +556,7 @@ class Node:
             if(self.compromised):
                        self.compromised_log()
             sock.send(data)
-            response_data = sock.recv(1000000)
+            response_data = sock.recv(512)
             if(self.compromised):
                         self.compromised_log()
             return response_data if response_data else None
@@ -548,3 +596,107 @@ class Node:
                         time.sleep(delay)
             finally:
                 sock.close()
+
+    def log_packet(self, cell: TorCell, routing_entry = None):
+        """
+        Log packet information based on direction and compromisation status.
+        
+        Args:
+            cell: TorCell object to log
+            direction: "in" for incoming or "out" for outgoing
+            compromised: Boolean indicating if node is compromised
+        """
+
+        cmd_map = {
+            b'\x00': 'CREATE',
+            b'\x01': 'CREATED',
+            b'\x03': 'RELAY',
+            b'\x04': 'DESTROY'
+        }
+
+        relay_cmd_map = {
+             b'\x00': 'EXTEND',
+             b'\x01': 'EXTENDED',
+             b'\x02': 'BEGIN',
+             b'\x03': 'CONNECTED',
+             b'\x04': 'END',
+             b'\x05': 'DATA',
+        }
+
+        circuit_id = int.from_bytes(cell.circid)
+        cell_type = cmd_map.get(cell.cmd, f"UNKNOWN({cell.cmd.hex()})")
+        
+        if not self.compromised:
+            # Non-compromised: log packet direction, cell type, and circuit ID only
+            self.logger.info(
+                f"[PACKET] Type: {cell_type}, "
+                f"Circuit ID: {circuit_id}"
+            )
+        else:
+            
+            if self.type == "guard" and routing_entry != None:
+                data_preview = cell.data[:50] if len(cell.data) > 50 else cell.data
+                data_str = data_preview.hex() if data_preview else "None"
+
+                if routing_entry.get_in_circ_id() == circuit_id:
+                    direction = "request"
+                else:
+                    direction = "response"
+
+                self.logger.info(f"[PACKET-{direction.upper()}] Type: {cell_type}, Circuit ID: {circuit_id}")
+
+                if routing_entry.get_in_circ_id() == circuit_id:
+                    self.logger.info(f"  Source: {routing_entry.get_source_coords()[0]}:{routing_entry.get_source_coords()[1]}")
+                    self.logger.info(f"  Destination: {routing_entry.get_dest_coords()[0]}:{routing_entry.get_dest_coords()[1]}")
+                else:
+                    self.logger.info(f"  Source: {routing_entry.get_dest_coords()[0]}:{routing_entry.get_dest_coords()[1]}")
+                    self.logger.info(f"  Destination: {routing_entry.get_source_coords()[0]}:{routing_entry.get_source_coords()[1]}")
+                
+                
+                self.logger.info(f"  Data: {data_str}{'...' if len(cell.data) > 50 else ''}")
+
+
+            elif self.type == "exit" and routing_entry != None:
+                
+                if routing_entry.get_in_circ_id() == circuit_id:
+                    direction = "request"
+                    nonce = "forward"
+                else:
+                    direction = "response"
+                    nonce = "backward"
+
+                K = routing_entry.get_session_key()
+
+                relay_decrypted = aes_ctr_decrypt(cell.relay_command, K, nonce)
+                streamid_decrypted = aes_ctr_decrypt(cell.streamid, K, nonce)
+                digest_decrypted = aes_ctr_decrypt(cell.digest, K, nonce)
+                payload_decrypted = aes_ctr_decrypt(cell.data, K, nonce)
+                
+                relay_command = relay_cmd_map.get(relay_decrypted, f"UNKNOWN({cell.cmd.hex()})")
+
+                if relay_command == "BEGIN":
+                    ip, port = decode_payload(payload_decrypted, 2)
+                    data = f"{str(ipaddress.IPv4Address(ip))}:{int.from_bytes(port)}"
+                else:
+                    data = decode_payload(payload_decrypted, 1)[0].decode("utf-8")
+
+                self.logger.info(f"[PACKET-{direction.upper()}] Type: {cell_type}, Circuit ID: {circuit_id}")
+                self.logger.info(f"  Relay command: {relay_command}")
+                self.logger.info(f"  Stream ID: {int.from_bytes(streamid_decrypted)}")
+                self.logger.info(f"  Digest: {digest_decrypted.hex()}")
+
+                if routing_entry.get_in_circ_id() == circuit_id:
+                    self.logger.info(f"  Source: {routing_entry.get_source_coords()[0]}:{routing_entry.get_source_coords()[1]}")
+                    self.logger.info(f"  Destination: {routing_entry.get_dest_coords()[0]}:{routing_entry.get_dest_coords()[1]}")
+                else:
+                    self.logger.info(f"  Source: {routing_entry.get_dest_coords()[0]}:{routing_entry.get_dest_coords()[1]}")
+                    self.logger.info(f"  Destination: {routing_entry.get_source_coords()[0]}:{routing_entry.get_source_coords()[1]}")
+
+                self.logger.info(f"  Data: {data}")
+
+            else:
+                data_preview = cell.data[:50] if len(cell.data) > 50 else cell.data
+                data_str = data_preview.hex() if data_preview else "None"
+                
+                self.logger.info(f"[PACKET] Type: {cell_type}, Circuit ID: {circuit_id}")
+                self.logger.info(f"  Data: {data_str}{'...' if len(cell.data) > 50 else ''}")

@@ -59,7 +59,7 @@ class Client:
 
         self.circuits[circuit_id].extend(circuit)
         
-        route_str = "\n    → ".join([f"{n.type.upper()} [{n.ip}:{n.port}] ({n.owner})" for n in circuit])
+        route_str = "\n    → ".join([f"{n.type.upper()}:{n.id} [{n.ip}:{n.port}] ({n.owner})" for n in circuit])
         self.logger.info(f"Circuit #{circuit_id} route established:\n    → {route_str}")
 
 
@@ -100,7 +100,7 @@ class Client:
             x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(node.pub)
             self.g_x1, self.x1 = g_x1, x1
             
-            payload = encode_payload([g_x1_bytes_encrypted, data_to_bytes(node.port), data_to_bytes(node.ip)])
+            payload = encode_payload([g_x1_bytes_encrypted, data_to_bytes(node.port), data_to_bytes(node.ip)], is_relay=True)
             
             relay = RelayCommands.EXTEND
             streamid = data_to_bytes(0)
@@ -130,7 +130,7 @@ class Client:
         x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.get_exit(circuit_id).pub)
         self.g_x1, self.x1 = g_x1, x1
         
-        payload = encode_payload([g_x1_bytes_encrypted, data_to_bytes(self.get_exit(circuit_id).port), data_to_bytes(self.get_exit(circuit_id).ip)])
+        payload = encode_payload([g_x1_bytes_encrypted, data_to_bytes(self.get_exit(circuit_id).port), data_to_bytes(self.get_exit(circuit_id).ip)], is_relay=True)
         
         relay = RelayCommands.EXTEND
         streamid = data_to_bytes(0)
@@ -234,7 +234,7 @@ class Client:
 
     def enstablish_connection_with_server(self, server_ip: str, server_port: int, circuit_id: int) -> bool:
         
-        payload = encode_payload([data_to_bytes(server_ip), data_to_bytes(server_port)])
+        payload = encode_payload([data_to_bytes(server_ip), data_to_bytes(server_port)], is_relay=True)
 
         used_stream_ids = {item[1] for lst in self.server_stream_circuit_map.values() for item in lst}
         random_stream_id = self._random_stream_id(used_stream_ids)
@@ -261,7 +261,7 @@ class Client:
         return success
     
     def send_message_to_server(self, server_ip: str, server_port: int, payload: str, circuit_id: int) -> bytes:
-        payload = encode_payload([data_to_bytes(payload)])
+        payload = encode_payload([data_to_bytes(payload)], is_relay=True)
 
         key = f"{server_ip}:{server_port}"
         streamid = None
@@ -302,7 +302,7 @@ class Client:
             try:
                 sock = self.persistent_connections[destination_key]
                 sock.sendall(payload)
-                response_data = sock.recv(1000000)
+                response_data = sock.recv(512)
                 
                 if response_data:
                     self.logger.debug(f"Received response from {destination_key}")
@@ -326,7 +326,7 @@ class Client:
             self.persistent_connections[destination_key] = sock
             
             sock.sendall(payload)
-            response_data = sock.recv(1000000)
+            response_data = sock.recv(512)
             
             if response_data:
                 self.logger.debug(f"Received response from {destination_key}")
@@ -468,6 +468,10 @@ class Client:
         top_scored = sorted_nodes[:top_n]
                 
         top_candidates = [node for node, _ in top_scored]
+
+        for node in top_candidates:
+            print(node.type+","+node.id+";")
+
         selected = random.choice(top_candidates)
         
         return selected

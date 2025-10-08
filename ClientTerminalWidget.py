@@ -96,6 +96,7 @@ class TerminalWidget(QWidget):
         
         # Initial messages
         self.append_log(f"Terminal initialized for {client_id}")
+        self.append_log(f"--- Listening on {client.ip} {client.port} ---")
         self.append_log("Type 'connect <circuit_id>' to establish Tor connection")
         self.append_log("Type 'help' for available commands")
     

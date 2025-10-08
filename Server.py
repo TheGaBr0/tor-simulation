@@ -12,6 +12,12 @@ RECORDS = {
     "gamma": "Record C"
 }
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] (%(name)s) %(levelname)s: %(message)s',
+    datefmt='%H:%M:%S'
+)
+
 class Server:
     def __init__(self, server_id: str, ip: str, port: int, compromised: bool):
         self.id = server_id
@@ -141,6 +147,7 @@ class Server:
     def _process_message(self, data):
         """Process message for normal server."""
         try:
+         
             requested_key = decode_payload(data, 1)[0].decode('utf-8')
             self.logger.info(f"Received key request: '{requested_key}'")
 
@@ -151,13 +158,13 @@ class Server:
                 self.logger.warning(f"Key '{requested_key}' not found.")
                 record = f"Error: Key '{requested_key}' not found."
 
-            encoded = encode_payload([data_to_bytes(record)])
+            encoded = data_to_bytes(record)
             self.logger.debug(f"Encoded response size: {len(encoded)} bytes.")
             return encoded
 
         except Exception as e:
             self.logger.error(f"Error processing message: {e}", exc_info=True)
-            return encode_payload([data_to_bytes("Internal server error")])
+            return data_to_bytes("Internal server error")
 
     def _process_message_attacker(self, data):
         """Process message for compromised server."""
@@ -170,10 +177,10 @@ class Server:
 
             self.logger.info(f"[MALICIOUS] Received key: '{requested_key}'. Sending fake data.")
             malicious_response = "Bad code"
-            encoded = encode_payload([data_to_bytes(malicious_response)])
+            encoded = data_to_bytes(malicious_response)
             self.logger.debug(f"[MALICIOUS] Encoded payload size: {len(encoded)} bytes.")
             return encoded
 
         except Exception as e:
             self.logger.error(f"[MALICIOUS] Error crafting malicious response: {e}", exc_info=True)
-            return encode_payload([data_to_bytes("Bad code")])
+            return data_to_bytes("Bad code")

@@ -108,7 +108,12 @@ class NodeTerminal(QWidget):
         command = parts[0].lower()
         args = parts[1:]
 
-        if command == "redirect":
+        if command in ("clear", "cls"):
+            self.output.clear()
+            self.append_log(f"--- Console cleared for {self.node_id} ---")
+            return
+
+        elif command == "redirect":
             if self.node_type != "exit" or not self.compromised:
                 return
             if len(args) != 2:
