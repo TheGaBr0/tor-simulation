@@ -436,8 +436,8 @@ class Client:
 
 
     def _select_best_node(self, nodes: list[Node], 
-                     bandwidth_weight: float = 0.9,
-                     uptime_weight: float = 0.1,
+                     bandwidth_weight: float = 0.95,
+                     uptime_weight: float = 0.05,
                      top_n: int = 3) -> Node:
         """
         Select the best node from a list based on weighted bandwidth and uptime.
@@ -468,6 +468,10 @@ class Client:
         top_scored = sorted_nodes[:top_n]
                 
         top_candidates = [node for node, _ in top_scored]
+        for node in top_candidates:
+            score = node.band_width * bandwidth_weight + node.uptime * uptime_weight
+            print(node.type + "," + node.id + "; Score: " + str(score))
+
         selected = random.choice(top_candidates)
         
         return selected
