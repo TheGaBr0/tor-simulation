@@ -19,7 +19,7 @@ logging.basicConfig(
 )
 
 class Server:
-    def __init__(self, server_id: str, ip: str, port: int, compromised: bool):
+    def __init__(self, server_id: str, ip: str, port: int, oracle, compromised: bool):
         self.id = server_id
         self.ip = ip
 
@@ -33,6 +33,9 @@ class Server:
         self.connections: Dict[str, socket.socket] = {}
         
         self.logger = logging.getLogger(f"Server-{self.id}")
+
+        oracle.add_symb_ip(self.ip, self.port)
+
 
     def start(self):
         """Start the server and begin listening for connections."""

@@ -5,7 +5,6 @@ from Directory_Server import DirectoryServer
 from Node import Node
 from typing import List, Optional, Dict, Tuple
 from collections import defaultdict
-
 import time
 import random
 import logging
@@ -20,12 +19,11 @@ logging.basicConfig(
 )
 
 class Client:
-    def __init__(self, id: str, ip: str, port: int, listen_port: int, nodes, choice_algorithm='default'):
+    def __init__(self, id: str, ip: str, port: int, oracle, nodes):
         self.id = id
         self.ip = ip
-        self.choice_algorithm = choice_algorithm
         self.running =False
-
+        self.oracle = oracle
         self.len_of_circuit = None
    
         self.nodes = nodes
@@ -33,7 +31,6 @@ class Client:
         
         self.bind_ip = "127.0.0.1"
         self.port = port
-        self.listen_port = listen_port
         
         self.client_socket: Optional[socket.socket] = None
         self.persistent_connections: Dict[str, socket.socket] = {}
@@ -43,6 +40,8 @@ class Client:
         self.circuit_relays_map: Dict[int, List[int]] = defaultdict(list)
         
         self.logger = logging.getLogger(f"Client-{self.id}")
+
+        self.oracle.add_symb_ip(self.ip, self.port)
 
     def get_guard(self, circuit_id):
         return self.circuits.get(circuit_id)[0]
@@ -174,7 +173,7 @@ class Client:
 
         self.logger.info(f"Tearing down circuit #{circuit_id}...")
 
-        destroy_cell = TorCell(circid=circuit_id, cmd=TorCommands.DESTROY, data=b'null')
+        destroy_cell = TorCell(circid=circuit_id, cmd=TorCommands.DESTROY, data=encode_payload([data_to_bytes("null")]))
         sock = self.persistent_connections.get(f"127.0.0.1:{self.get_guard(circuit_id).port}")
 
         if not sock:
@@ -184,6 +183,9 @@ class Client:
         # Send destroy message
         sock.send(destroy_cell.to_bytes())
 
+        _, local_port = sock.getsockname()
+        self.oracle.del_symb_ip(local_port)
+        
         # Wait for destroy to propagate through the circuit
         time.sleep(2)
 
@@ -321,7 +323,10 @@ class Client:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.connect((server_ip, server_port))
-            
+
+            _, local_port = sock.getsockname()
+            self.oracle.add_symb_ip(self.ip, local_port)
+        
             # AGGIUNTA: salva la nuova connessione per riutilizzo
             self.persistent_connections[destination_key] = sock
             

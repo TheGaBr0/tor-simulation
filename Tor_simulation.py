@@ -13,6 +13,7 @@ import random
 import time
 from tor_security_sim import *
 from Statistic_Inference import *
+from Oracle import Oracle
 
 def random_ipv4() -> str:
     """Return a random IPv4 address."""
@@ -432,17 +433,21 @@ class EntityConnectionManager:
         return circuit_info.get('path', [])
 
 def main():
-    dir_server= DirectoryServer(random_ipv4(),9000)
+
+    
+    oracle = Oracle()
+    dir_server= DirectoryServer(random_ipv4(),9000, oracle)
+
 
     nodes = dir_server.guards+dir_server.relays+dir_server.exits
 
-    provider_server_1 = Server("S1", random_ipv4(), 21000, compromised=False)
-    provider_server_2 = Server("S2", random_ipv4(), 27000, compromised=False)
-    attacker_server = Server("S3", random_ipv4(), 28000, compromised=True)
+    provider_server_1 = Server("S1", random_ipv4(), 21000, oracle, compromised=False)
+    provider_server_2 = Server("S2", random_ipv4(), 27000, oracle, compromised=False)
+    attacker_server = Server("S3", random_ipv4(), 28000, oracle, compromised=True)
 
     # Initialize clients
-    client_1 = Client("C1", random_ipv4(), 22000, 22001, nodes)
-    client_2 = Client("C2", random_ipv4(), 43000, 43001, nodes)
+    client_1 = Client("C1", random_ipv4(), 22000, oracle, nodes)
+    client_2 = Client("C2", random_ipv4(), 43000, oracle, nodes)
 
     # Start servers in background threads
     threading.Thread(target=provider_server_1.start, daemon=True).start()

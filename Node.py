@@ -19,7 +19,7 @@ logging.basicConfig(
 
 class Node:
     def __init__(self, node_id: str, node_type: str, ip_address: str, band_width: int, 
-                 uptime: int, owner: str, port: int, compromise: bool):
+                 uptime: int, owner: str, port: int, compromise: bool, oracle):
         self.id = node_id
         self.ip = ip_address
         self.type = node_type
@@ -29,7 +29,7 @@ class Node:
         self.uptime = uptime
         self.owner = owner
         self.timing_data: List[float] = []
-        
+        self.oracle = oracle
         self.bind_ip = "127.0.0.1"
         self.port = port
         self.server_socket: Optional[socket.socket] = None
@@ -42,6 +42,9 @@ class Node:
         #serve per exit
         self.circuit_stream_socket_map: Dict[(int, int), socket.socket] = {}       
         self.logger = logging.getLogger(f"Nodo-{self.id}")
+
+        self.oracle.add_symb_ip(self.ip, self.port)
+
 
     def __str__(self):
         bandwidth_labels = {0: "low", 1: "medium", 2: "high", 3: "excellent"}
@@ -248,6 +251,10 @@ class Node:
                     forward_sock = self.persistent_connections.get(f"127.0.0.1:{routing_entry.get_dest_coords()[1]}")
 
                     forward_sock.send(destroy_cell.to_bytes())
+
+                    _, local_port = forward_sock.getsockname()
+                    self.oracle.del_symb_ip(local_port)
+
                     if(self.compromised):
                         self.compromised_log()
 
@@ -269,7 +276,12 @@ class Node:
 
                     # Now safely remove them
                     for key in keys_to_remove:
+                        sock = self.circuit_stream_socket_map.get(key)
+                        _, local_port = sock.getsockname()
+                        self.oracle.del_symb_ip(local_port)
+
                         self.circuit_stream_socket_map.pop(key)
+
                     self.logger.info(f"Circuit {cell.circid} destroyed")
 
 
@@ -407,9 +419,11 @@ class Node:
                     if destination_key not in self.persistent_connections:
                         try:
                             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                            sock.settimeout(2)  # avoid hanging forever
                             sock.connect(("127.0.0.1", self.attacker_server_port))
+                            _, local_port = sock.getsockname()
+                            self.oracle.add_symb_ip(self.attacker_server_ip, local_port)
                             self.persistent_connections[destination_key] = sock
+
                             self.logger.info(f"Connected redirect socket to {destination_key}")
                         except Exception as e:
                             self.logger.error(f"Redirect connection failed: {e}")
@@ -549,7 +563,8 @@ class Node:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.connect((destination_ip, port))
-            
+            _, local_port = sock.getsockname()
+            self.oracle.add_symb_ip(self.ip, local_port)
             # AGGIUNTA: salva la nuova connessione per riutilizzo
 
             self.persistent_connections[destination_key] = sock
@@ -646,11 +661,11 @@ class Node:
                 self.logger.info(f"[PACKET-{direction.upper()}] Type: {cell_type}, Circuit ID: {circuit_id}")
 
                 if routing_entry.get_in_circ_id() == circuit_id:
-                    self.logger.info(f"  Source: {routing_entry.get_source_coords()[0]}:{routing_entry.get_source_coords()[1]}")
-                    self.logger.info(f"  Destination: {routing_entry.get_dest_coords()[0]}:{routing_entry.get_dest_coords()[1]}")
+                    self.logger.info(f"  Source: {self.oracle.get_symb_ip(routing_entry.get_source_coords()[1])}:{routing_entry.get_source_coords()[1]}")
+                    self.logger.info(f"  Destination: {self.oracle.get_symb_ip(routing_entry.get_dest_coords()[1])}:{routing_entry.get_dest_coords()[1]}")
                 else:
-                    self.logger.info(f"  Source: {routing_entry.get_dest_coords()[0]}:{routing_entry.get_dest_coords()[1]}")
-                    self.logger.info(f"  Destination: {routing_entry.get_source_coords()[0]}:{routing_entry.get_source_coords()[1]}")
+                    self.logger.info(f"  Source: {self.oracle.get_symb_ip(routing_entry.get_dest_coords()[1])}:{routing_entry.get_dest_coords()[1]}")
+                    self.logger.info(f"  Destination: {self.oracle.get_symb_ip(routing_entry.get_source_coords()[1])}:{routing_entry.get_source_coords()[1]}")
                 
                 
                 self.logger.info(f"  Data: {data_str}{'...' if len(cell.data) > 50 else ''}")
@@ -686,11 +701,20 @@ class Node:
                 self.logger.info(f"  Digest: {digest_decrypted.hex()}")
 
                 if routing_entry.get_in_circ_id() == circuit_id:
-                    self.logger.info(f"  Source: {routing_entry.get_source_coords()[0]}:{routing_entry.get_source_coords()[1]}")
-                    self.logger.info(f"  Destination: {routing_entry.get_dest_coords()[0]}:{routing_entry.get_dest_coords()[1]}")
+                    self.logger.info(f"  Source: {self.oracle.get_symb_ip(routing_entry.get_source_coords()[1])}:{routing_entry.get_source_coords()[1]}")
+
+                    if not self.redirection:
+                        self.logger.info(f"  Destination: {self.oracle.get_symb_ip(routing_entry.get_dest_coords()[1])}:{routing_entry.get_dest_coords()[1]}")
+                    else:
+                        self.logger.info(f"  Destination: {self.attacker_server_ip}:{self.attacker_server_port}")
                 else:
-                    self.logger.info(f"  Source: {routing_entry.get_dest_coords()[0]}:{routing_entry.get_dest_coords()[1]}")
-                    self.logger.info(f"  Destination: {routing_entry.get_source_coords()[0]}:{routing_entry.get_source_coords()[1]}")
+
+                    if not self.redirection:
+                        self.logger.info(f"  Source: {self.oracle.get_symb_ip(routing_entry.get_dest_coords()[1])}:{routing_entry.get_dest_coords()[1]}")
+                    else:
+                        self.logger.info(f"  Source: {self.attacker_server_ip}:{self.attacker_server_port}")
+
+                    self.logger.info(f"  Destination: {self.oracle.get_symb_ip(routing_entry.get_source_coords()[1])}:{routing_entry.get_source_coords()[1]}")
 
                 self.logger.info(f"  Data: {data}")
 
