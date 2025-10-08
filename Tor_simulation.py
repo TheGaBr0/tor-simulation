@@ -12,6 +12,7 @@ from ServerTerminalWindow import ServerTerminal
 import random
 import time
 from tor_security_sim import *
+from Statistic_Inference import *
 
 def random_ipv4() -> str:
     """Return a random IPv4 address."""
@@ -474,6 +475,9 @@ def main():
         node for group in (dir_server.guards, dir_server.exits, dir_server.relays)
         for node in group if node.compromised
     ]
+
+    calc=probCalculator(nodes)
+    print(calc.calculate_diversity_constrained_probability())
 
     analyzer = CorrelationAttackAnalyzer(
                     compromised_nodes=compromised_nodes,
