@@ -591,7 +591,7 @@ class Node:
             self.attacker_server_ip = attacker_server_ip
             self.attacker_server_port = attacker_server_port
     
-    def _flood_circuit(self, ip, port, n, pub_key, delay=None):
+    def _flood_circuit(self, ip, port, pub_key, delay=None):
         if self.compromised:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.connect(("127.0.0.1", port))    

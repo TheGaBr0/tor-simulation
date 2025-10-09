@@ -86,7 +86,7 @@ class NodeTerminal(QWidget):
         self.append_log(f"--- Owner: {node.owner} ---")
 
         if self.compromised:    
-            self.append_log("Type 'flood <server_ip> <server_port> <amount>' to flood a server")
+            self.append_log("Type 'flood <server_ip> <server_port>' to flood a server")
             if self.node_type == 'exit':
                 self.append_log("Type 'redirect <ip> <port>' to redirect exit traffic")
 
@@ -135,9 +135,9 @@ class NodeTerminal(QWidget):
                 return
             
             if len(args) != 3:
-                self.append_log("Usage: flood <server_ip> <server_port> <amount>")
+                self.append_log("Usage: flood <server_ip> <server_port>")
                 return
-            server_ip, server_port, amount = args
+            server_ip, server_port = args
 
             pub_key = None
             for node in self.dir_server.guards+self.dir_server.relays+self.dir_server.exits:
@@ -145,13 +145,13 @@ class NodeTerminal(QWidget):
                     pub_key = node.pub
                     break
 
-            self.append_log(f"[Exit {self.node_id}] Flooding {amount} to {server_ip}:{server_port}")
+            self.append_log(f"[Exit {self.node_id}] Flooding to {server_ip}:{server_port}")
 
 
             for _ in range(5):  # 10 threads flooding
                 t = threading.Thread(
                     target=self.node._flood_circuit,
-                    args=(server_ip, int(server_port), int(amount), pub_key),
+                    args=(server_ip, int(server_port), pub_key),
                     daemon=True   # optional: won't block process exit
                 )
                 t.start()
