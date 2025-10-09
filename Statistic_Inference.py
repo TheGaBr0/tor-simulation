@@ -1,97 +1,147 @@
+from dataclasses import dataclass
+from typing import List, Dict
+from itertools import permutations
 
-from typing import List, Tuple
-from collections import defaultdict
-import itertools
-from Node import *
+@dataclass
+class Node:
+    id: str
+    band_width: float
+    uptime: float
+    is_guard: bool = False
+    is_exit: bool = False
+    is_middle: bool = False
+    compromised: bool = False  # <- using this consistently
 
-class probCalculator:
-    def __init__(self, nodes: List[Node]):
-        self.nodes=nodes
+class Probabilities:
+    def __init__(self, bandwidth_weight: float = 0.95, uptime_weight: float = 0.05, num_middle_nodes: int = 1):
+        self.bandwidth_weight = bandwidth_weight
+        self.uptime_weight = uptime_weight
+        self.num_middle_nodes = num_middle_nodes
+        self.guard_nodes: List[Node] = []
+        self.middle_nodes: List[Node] = []
+        self.exit_nodes: List[Node] = []
 
+    def _calculate_node_probabilities(self, nodes: List[Node]) -> Dict[str, float]:
+        if not nodes:
+            return {}
+        node_scores = {
+            node.id: (node.band_width * self.bandwidth_weight + node.uptime * self.uptime_weight)
+            for node in nodes
+        }
+        total_score = sum(node_scores.values())
+        if total_score == 0:
+            prob = 1.0 / len(nodes)
+            return {node.id: prob for node in nodes}
+        return {nid: score / total_score for nid, score in node_scores.items()}
 
-    def get_16_subnet(self,ip: str) -> str:
-        """Estrae la subnet /16 da un indirizzo IP"""
-        return '.'.join(ip.split('.')[:2])
-     
-    def calculate_diversity_constrained_probability(
-            self,
-        bandwidth_weight: float = 0.95,
-        uptime_weight: float = 0.05,
-        top_n: int = 3,
-        num_simulations: int = 5000
-    ) -> dict:
-        """
-        Calcola la probabilità considerando anche i vincoli di diversità
-        (stesso owner e stessa /16 subnet non possono essere scelti).
-        
-        Questa è una versione più accurata che considera le dipendenze
-        tra la selezione di guard ed exit.
-        """
-        
-        guards = [n for n in self.nodes if n.type == 'guard']
-        exits = [n for n in self.nodes if n.type == 'exit']
-        
-        import random
-        
-        # Calcola score
-        guard_scores = [(g, g.band_width * bandwidth_weight + g.uptime * uptime_weight) 
-                        for g in guards]
-        exit_scores = [(e, e.band_width * bandwidth_weight + e.uptime * uptime_weight) 
-                    for e in exits]
-        
-        guard_scores.sort(key=lambda x: x[1], reverse=True)
-        exit_scores.sort(key=lambda x: x[1], reverse=True)
-        
-        top_guards = [g for g, _ in guard_scores[:min(top_n, len(guard_scores))]]
-        
-        # Contatori
-        guard_compromised_count = 0
-        exit_compromised_count = 0
-        both_compromised_count = 0
-        at_least_one_count = 0
-        
-        for _ in range(num_simulations):
-            # Seleziona guard
-            selected_guard = random.choice(top_guards)
-            
-            # Filtra exit che non condividono owner o /16 subnet con il guard
-            available_exits = [
-                e for e in exits 
-                if e.owner != selected_guard.owner 
-                and self.get_16_subnet(e.ip) != self.get_16_subnet(selected_guard.ip) # type: ignore
-            ]
-            
-            if not available_exits:
-                continue  # Skip questa simulazione se non ci sono exit validi
-            
-            # Calcola score per exit disponibili
-            available_exit_scores = [
-                (e, e.band_width * bandwidth_weight + e.uptime * uptime_weight) 
-                for e in available_exits
-            ]
-            available_exit_scores.sort(key=lambda x: x[1], reverse=True)
-            top_available_exits = [e for e, _ in available_exit_scores[:min(top_n, len(available_exit_scores))]]
-            
-            # Seleziona exit
-            selected_exit = random.choice(top_available_exits)
-            
-            guard_comp = selected_guard.compromised
-            exit_comp = selected_exit.compromised
-            
-            if guard_comp:
-                guard_compromised_count += 1
-            if exit_comp:
-                exit_compromised_count += 1
-            if guard_comp and exit_comp:
-                both_compromised_count += 1
-            if guard_comp or exit_comp:
-                at_least_one_count += 1
-        
+    def set_nodes(self, guard_nodes: List[Node], middle_nodes: List[Node], exit_nodes: List[Node]):
+        self.guard_nodes = guard_nodes
+        self.middle_nodes = middle_nodes
+        self.exit_nodes = exit_nodes
+
+    def calculate_circuit_probability(self, guard_id: str, middle_ids: List[str], exit_id: str) -> float:
+        guard_probs = self._calculate_node_probabilities(self.guard_nodes)
+        middle_probs = self._calculate_node_probabilities(self.middle_nodes)
+        exit_probs = self._calculate_node_probabilities(self.exit_nodes)
+        prob = guard_probs.get(guard_id, 0)
+        for mid in middle_ids:
+            prob *= middle_probs.get(mid, 0)
+        prob *= exit_probs.get(exit_id, 0)
+        return prob
+
+    def calculate_correlation_attack_probability(self) -> Dict[str, float]:
+        guard_probs = self._calculate_node_probabilities(self.guard_nodes)
+        middle_probs = self._calculate_node_probabilities(self.middle_nodes)
+        exit_probs = self._calculate_node_probabilities(self.exit_nodes)
+
+        total_attack_prob = 0.0
+        compromised_count = 0
+        total_circuits = 0
+
+        middle_combinations = list(permutations(self.middle_nodes, self.num_middle_nodes))
+
+        for guard in self.guard_nodes:
+            for middle_combo in middle_combinations:
+                for exit_node in self.exit_nodes:
+                    circuit_ids = {guard.id, exit_node.id}
+                    circuit_ids.update(m.id for m in middle_combo)
+
+                    if len(circuit_ids) < 2 + self.num_middle_nodes:
+                        continue
+
+                    total_circuits += 1
+
+                    circuit_prob = guard_probs.get(guard.id, 0) * exit_probs.get(exit_node.id, 0)
+                    for middle_node in middle_combo:
+                        circuit_prob *= middle_probs.get(middle_node.id, 0)
+
+                    if guard.compromised and exit_node.compromised:
+                        total_attack_prob += circuit_prob
+                        compromised_count += 1
+
+        guard_compromise_rate = (sum(1 for g in self.guard_nodes if g.compromised) / len(self.guard_nodes)) if self.guard_nodes else 0
+        exit_compromise_rate = (sum(1 for e in self.exit_nodes if e.compromised) / len(self.exit_nodes)) if self.exit_nodes else 0
+
         return {
-            'guard_compromised': guard_compromised_count / num_simulations,
-            'exit_compromised': exit_compromised_count / num_simulations,
-            'both_compromised': both_compromised_count / num_simulations,
-            'at_least_one_compromised': at_least_one_count / num_simulations,
-            'simulations_run': num_simulations,
+            'total_attack_probability': total_attack_prob,
+            'guard_compromise_rate': guard_compromise_rate,
+            'exit_compromise_rate': exit_compromise_rate,
+            'compromised_circuits': compromised_count,
+            'total_circuits': total_circuits,
+            'vulnerable_percentage': (compromised_count / total_circuits * 100) if total_circuits > 0 else 0
         }
 
+    def get_vulnerable_circuits(self, top_n: int = 10):
+        guard_probs = self._calculate_node_probabilities(self.guard_nodes)
+        middle_probs = self._calculate_node_probabilities(self.middle_nodes)
+        exit_probs = self._calculate_node_probabilities(self.exit_nodes)
+
+        vulnerable_circuits = []
+        middle_combinations = list(permutations(self.middle_nodes, self.num_middle_nodes))
+
+        for guard in self.guard_nodes:
+            for middle_combo in middle_combinations:
+                for exit_node in self.exit_nodes:
+                    circuit_ids = {guard.id, exit_node.id}
+                    circuit_ids.update(m.id for m in middle_combo)
+                    if len(circuit_ids) < 2 + self.num_middle_nodes:
+                        continue
+                    if guard.compromised and exit_node.compromised:
+                        circuit_prob = guard_probs.get(guard.id, 0) * exit_probs.get(exit_node.id, 0)
+                        for m in middle_combo:
+                            circuit_prob *= middle_probs.get(m.id, 0)
+                        vulnerable_circuits.append({
+                            'guard_id': guard.id,
+                            'middle_ids': [m.id for m in middle_combo],
+                            'exit_id': exit_node.id,
+                            'probability': circuit_prob
+                        })
+
+        vulnerable_circuits.sort(key=lambda x: x['probability'], reverse=True)
+        return vulnerable_circuits[:top_n]
+
+    def simulate_attack_scenarios(self, compromise_rates: List[float]):
+        results = {}
+        original_states = {node.id: node.compromised for node in (self.guard_nodes + self.exit_nodes)}
+
+        for rate in compromise_rates:
+            all_guards = sorted(self.guard_nodes, key=lambda n: n.band_width, reverse=True)
+            all_exits = sorted(self.exit_nodes, key=lambda n: n.band_width, reverse=True)
+
+            num_compromised_guards = int(len(all_guards) * rate)
+            num_compromised_exits = int(len(all_exits) * rate)
+
+            for node in (self.guard_nodes + self.exit_nodes):
+                node.compromised = False
+
+            for i in range(num_compromised_guards):
+                all_guards[i].compromised = True
+            for i in range(num_compromised_exits):
+                all_exits[i].compromised = True
+
+            results[rate] = self.calculate_correlation_attack_probability()
+
+        for node in (self.guard_nodes + self.exit_nodes):
+            node.compromised = original_states.get(node.id, False)
+
+        return results

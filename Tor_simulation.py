@@ -14,6 +14,7 @@ import time
 from tor_security_sim import *
 from Statistic_Inference import *
 from Oracle import Oracle
+from Statistic_Inference import *
 
 def random_ipv4() -> str:
     """Return a random IPv4 address."""
@@ -481,8 +482,18 @@ def main():
         for node in group if node.compromised
     ]
 
-    calc=probCalculator(nodes)
-    print(calc.calculate_diversity_constrained_probability())
+
+    entry_nodes = [node for node in nodes if node.type == "guard"]
+    exit_nodes = [node for node in nodes if node.type == "exit"]
+    middle_nodes = [node for node in nodes if node.type == "relay"]
+
+    AttackProb = Probabilities(len(middle_nodes))
+
+    # Set nodes and analyze
+    AttackProb.set_nodes(entry_nodes, middle_nodes, exit_nodes)
+    results = AttackProb.calculate_correlation_attack_probability()
+    print(results)
+
 
     analyzer = CorrelationAttackAnalyzer(
                     compromised_nodes=compromised_nodes,
