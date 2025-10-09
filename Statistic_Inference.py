@@ -5,9 +5,6 @@ import itertools
 from Node import *
 
 class probCalculator:
-
-
-
     def __init__(self, nodes: List[Node]):
         self.nodes=nodes
 

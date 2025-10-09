@@ -477,91 +477,39 @@ class CorrelationAttackAnalyzer:
         timing_stats = self.get_timing_statistics()
         
         report = []
-        report.append("=" * 80)
-        report.append("TOR CUMULATIVE TIMING CORRELATION ATTACK REPORT")
-        report.append("=" * 80)
-        report.append(f"\nCompromised Nodes: {len(self.compromised_nodes)}")
-        report.append(f"  - Entry Nodes: {len(self.entry_nodes)}")
-        report.append(f"  - Middle Nodes: {len(self.middle_nodes)}")
-        report.append(f"  - Exit Nodes: {len(self.exit_nodes)}")
-        report.append(f"\nTime Window: {self.time_window}s")
-        report.append(f"Correlation Threshold: {self.correlation_threshold}")
-        
-        # Timing statistics
+
+        # Tabella correlazioni
         report.append("\n" + "=" * 80)
-        report.append("TIMING STATISTICS (per node)")
+        report.append("CORRELATION TABLE")
         report.append("=" * 80)
-        for node_id, stats in timing_stats.items():
-            report.append(f"\n{node_id}:")
-            report.append(f"  Total Events: {stats['total_events']}")
-            report.append(f"  Mean Inter-arrival: {stats['mean_inter_arrival']*1000:.2f}ms")
         
-        report.append("\n" + "=" * 80)
-        report.append("CUMULATIVE CORRELATED FLOWS")
-        report.append("=" * 80)
-        report.append(f"\nTotal Circuits Detected: {len(correlated_flows)}")
-        
-        if not correlated_flows:
-            report.append("\nNo correlated flows detected above threshold.")
-        else:
+        if correlated_flows:
+            report.append("\n┌─────────────────────┬─────────────┬──────────────┐")
+            report.append("│ Circuit             │ Confidence  │ Score        │")
+            report.append("├─────────────────────┼─────────────┼──────────────┤")
+            
             for flow in correlated_flows:
-                conf_emoji = "🔴" if flow['confidence'] == 'HIGH' else "🟡" if flow['confidence'] == 'MEDIUM' else "⚪"
+                circuit = f"{flow['entry_node']} -> {flow['exit_node']}"
+                score = flow['correlation_score']
+                confidence = flow['confidence']
                 
-                report.append(f"\n{'='*80}")
-                report.append(f"{conf_emoji} CIRCUIT: {flow['entry_node']} ➜ ??? ➜ {flow['exit_node']}")
-                report.append(f"{'='*80}")
+                # Colore basato sulla confidence
+                if confidence == 'HIGH':
+                    color = '\033[91m'  # Rosso
+                elif confidence == 'MEDIUM':
+                    color = '\033[93m'  # Giallo
+                else:
+                    color = '\033[92m'  # Verde
+                reset = '\033[0m'
                 
-                report.append(f"\nCumulative Correlation Score: {flow['correlation_score']:.1%} ({flow['confidence']} Confidence)")
-                report.append(f"  Base Correlation: {flow['cumulative_score']:.1%}")
-                report.append(f"  Session Bonus: +{flow['session_bonus']:.1%} ({flow['num_sessions']} sessions)")
-                report.append(f"  Consistency Bonus: +{flow['consistency_bonus']:.1%}")
-                
-                report.append(f"\nTotal Traffic Observed:")
-                report.append(f"  Entry Events: {flow['entry_events']}")
-                report.append(f"  Exit Events: {flow['exit_events']}")
-                report.append(f"  Observation Period: {flow['total_duration']:.1f}s")
-                report.append(f"  First Seen: {time.strftime('%H:%M:%S', time.localtime(flow['first_seen']))}")
-                report.append(f"  Last Seen: {time.strftime('%H:%M:%S', time.localtime(flow['last_seen']))}")
-                
-                report.append(f"\nSession Breakdown ({flow['num_sessions']} sessions):")
-                for i, session in enumerate(flow['session_details'], 1):
-                    e_start = session['entry_session'][0]
-                    report.append(f"  Session {i}: {session['individual_score']:.1%} score, "
-                                f"{session['entry_events']}→{session['exit_events']} events, "
-                                f"{time.strftime('%H:%M:%S', time.localtime(e_start))}")
-                
-                report.append(f"\nSession Consistency: {flow['score_consistency']:.1%}")
-                report.append(f"Average Session Score: {flow['avg_session_score']:.1%}")
-        
-        report.append("\n" + "=" * 80)
-        report.append("ATTACK SUMMARY")
-        report.append("=" * 80)
-        
-        high_conf = [f for f in correlated_flows if f['confidence'] == 'HIGH']
-        med_conf = [f for f in correlated_flows if f['confidence'] == 'MEDIUM']
-        
-        if high_conf:
-            report.append(f"\n✅ SUCCESS: {len(high_conf)} high-confidence deanonymization(s)")
-            report.append("   Cumulative evidence confirms these circuits are COMPROMISED.")
-        elif med_conf:
-            report.append(f"\n⚠️  PARTIAL SUCCESS: {len(med_conf)} medium-confidence correlation(s)")
-            report.append("   Continue monitoring to increase confidence.")
+                report.append(f"│ {circuit:<19} │ {color}{confidence:^11}{reset} │ {score:>11.1%}   │")
+            
+            report.append("└─────────────────────┴─────────────┴──────────────┘")
         else:
-            report.append("\n❌ LIMITED SUCCESS: Only low-confidence correlations detected.")
-            report.append("   Longer observation period needed.")
+            report.append("\nNo correlated flows detected.")
         
-        report.append("\n" + "=" * 80)
-        return "\n".join(report)
+        report.append("")
     
-    def get_deanonymized_circuits(self) -> List[Dict]:
-        """
-        Return only high-confidence deanonymized circuits.
-        
-        Returns:
-            List of circuits that have been successfully deanonymized
-        """
-        all_flows = self.perform_cumulative_correlation_attack()
-        return [flow for flow in all_flows if flow['confidence'] == 'HIGH']
     
 
         

@@ -643,8 +643,7 @@ class Node:
                 f"Circuit ID: {circuit_id}"
             )
         else:
-            
-            if self.type == "guard" and routing_entry != None:
+            if self.type != "exit" and routing_entry != None:
                 data_preview = cell.data[:50] if len(cell.data) > 50 else cell.data
                 data_str = data_preview.hex() if data_preview else "None"
 
