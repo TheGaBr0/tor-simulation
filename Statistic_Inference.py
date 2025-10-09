@@ -18,8 +18,8 @@ class probCalculator:
      
     def calculate_diversity_constrained_probability(
             self,
-        bandwidth_weight: float = 0.9,
-        uptime_weight: float = 0.1,
+        bandwidth_weight: float = 0.95,
+        uptime_weight: float = 0.05,
         top_n: int = 3,
         num_simulations: int = 5000
     ) -> dict:
