@@ -34,7 +34,7 @@ class ConnectionWorker(QObject):
 
     def connect(self, circuit_id):
         """Run connection in background thread"""
-        if self.client.connect_to_tor_network(circuit_id=self.circuit_id):
+        if self.client.connect_to_tor_network(circuit_id=self.circuit_id, len_of_circuit=3):
             path = [
                 self.client.id,
                 self.client.get_guard(circuit_id).id,

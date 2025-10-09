@@ -168,10 +168,6 @@ class TerminalWidget(QWidget):
             # Print report if available
             threaded_analyzer.print_report()
             
-            # Print deanonymized summary
-            summary = threaded_analyzer.get_deanonymized_summary()
-            if summary:
-                print(summary)
 
             self.append_log(f"Sending '{payload}' to {server_ip}:{server_port} via circuit {circuit_id}")
 

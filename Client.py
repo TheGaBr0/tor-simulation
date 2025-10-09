@@ -440,10 +440,9 @@ class Client:
 
 
 
-    def _select_best_node(self, nodes: list[Node], 
+    def _calculate_node_weights(self, nodes: list[Node], 
                      bandwidth_weight: float = 0.95,
-                     uptime_weight: float = 0.05,
-                     top_n: int = 3) -> Node:
+                     uptime_weight: float = 0.05) -> Node:
         """
         Select the best node from a list based on weighted bandwidth and uptime.
         
@@ -463,25 +462,39 @@ class Client:
             raise ValueError("Cannot select from empty node list")
         
         # Calculate weighted scores
-        scored_nodes = [
-            (node, node.band_width * bandwidth_weight + node.uptime * uptime_weight) 
+        node_scores = {
+            node.id: (node.band_width * bandwidth_weight + node.uptime * uptime_weight)
             for node in nodes
-        ]
+        }
         
-        # Sort by score and take top N
-        sorted_nodes = sorted(scored_nodes, key=lambda x: x[1], reverse=True)
-        top_scored = sorted_nodes[:top_n]
-                
-        top_candidates = [node for node, _ in top_scored]
-        
-        #for node in top_candidates:
-            #score = node.band_width * bandwidth_weight + node.uptime * uptime_weight
-            #print(node.type + "," + node.id + "; Score: " + str(score))
+        total_score = sum(node_scores.values())
 
-        selected = random.choice(top_candidates)
+        if total_score == 0:
+            # Fallback uniforme se tutti hanno score 0
+            prob = 1.0 / len(nodes)
+            return {node.id: prob for node in nodes}
         
-        return selected
+        return {
+            node_id: score / total_score 
+            for node_id, score in node_scores.items()
+        }
+    
+    def _get_node(self, nodes: list[Node], 
+                     bandwidth_weight: float = 0.999,
+                     uptime_weight: float = 0.001):
 
+        probabilities = self._calculate_node_weights(
+            nodes, bandwidth_weight, uptime_weight
+        )
+
+        for node in nodes:
+            print(f"{node.type}-{node.id} ({node.compromised})| {probabilities.get(node.id)}")
+
+        return random.choices(
+            nodes,
+            weights=[probabilities[n.id] for n in nodes],
+            k=1
+        )[0]
 
     def _get_16_subnet(self, ip: str) -> str:
         """
@@ -553,7 +566,7 @@ class Client:
             available_guards = self._filter_available_nodes("guard", used_owners, used_subnets)
             if not available_guards:
                 raise ValueError("No available guard nodes")
-            guard = self._select_best_node(available_guards)
+            guard = self._get_node(available_guards)
         
         circuit.append(guard)
         used_owners.add(guard.owner)
@@ -571,7 +584,7 @@ class Client:
                     f"Used owners: {len(used_owners)}, Used subnets: {len(used_subnets)}"
                 )
             
-            relay = self._select_best_node(available_relays)
+            relay = self._get_node(available_relays)
             circuit.append(relay)
             used_owners.add(relay.owner)
             used_subnets.add(self._get_16_subnet(relay.ip))
@@ -585,7 +598,7 @@ class Client:
                 f"Used owners: {len(used_owners)}, Used subnets: {len(used_subnets)}"
             )
         
-        exit_node = self._select_best_node(available_exits)
+        exit_node = self._get_node(available_exits)
         circuit.append(exit_node)
         
         return circuit
