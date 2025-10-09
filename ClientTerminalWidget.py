@@ -167,7 +167,7 @@ class TerminalWidget(QWidget):
             
             # Print report if available
             threaded_analyzer.print_report()
-            
+                        
 
             self.append_log(f"Sending '{payload}' to {server_ip}:{server_port} via circuit {circuit_id}")
 
