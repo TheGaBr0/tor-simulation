@@ -469,47 +469,78 @@ class CorrelationAttackAnalyzer:
         else:
             return "LOW"
     
-    def generate_cumulative_attack_report(self) -> str:
+    def print_correlation_update(self) -> str:
         """
-        Generate report showing cumulative correlation with session evolution.
+        Generate a compact correlation update table showing current attack status.
+        Called after each send command to show progress.
         """
         correlated_flows = self.perform_cumulative_correlation_attack()
-        timing_stats = self.get_timing_statistics()
         
         report = []
-
-        # Tabella correlazioni
         report.append("\n" + "=" * 80)
-        report.append("CORRELATION TABLE")
+        report.append("CORRELATION ATTACK STATUS")
         report.append("=" * 80)
         
-        if correlated_flows:
-            report.append("\n┌─────────────────────┬─────────────┬──────────────┐")
-            report.append("│ Circuit             │ Confidence  │ Score        │")
-            report.append("├─────────────────────┼─────────────┼──────────────┤")
-            
-            for flow in correlated_flows:
-                circuit = f"{flow['entry_node']} -> {flow['exit_node']}"
-                score = flow['correlation_score']
-                confidence = flow['confidence']
-                
-                # Colore basato sulla confidence
-                if confidence == 'HIGH':
-                    color = '\033[91m'  # Rosso
-                elif confidence == 'MEDIUM':
-                    color = '\033[93m'  # Giallo
-                else:
-                    color = '\033[92m'  # Verde
-                reset = '\033[0m'
-                
-                report.append(f"│ {circuit:<19} │ {color}{confidence:^11}{reset} │ {score:>11.1%}   │")
-            
-            report.append("└─────────────────────┴─────────────┴──────────────┘")
-        else:
-            report.append("\nNo correlated flows detected.")
+        if not correlated_flows:
+            report.append("\n📊 No correlations detected yet. Continue sending traffic...")
+            report.append("=" * 80)
+            return "\n".join(report)
         
-        report.append("")
+        # Summary stats
+        high_conf = [f for f in correlated_flows if f['confidence'] == 'HIGH']
+        med_conf = [f for f in correlated_flows if f['confidence'] == 'MEDIUM']
+        low_conf = [f for f in correlated_flows if f['confidence'] == 'LOW']
+        
+        report.append(f"\n📈 Total Circuits Detected: {len(correlated_flows)} "
+                    f"(🟢 {len(high_conf)} HIGH, 🟡 {len(med_conf)} MEDIUM, 🔴 {len(low_conf)} LOW)")
+        
+        # Table header (renamed “Sessions” → “Messages”)
+        report.append("\n┌────────────────────────────────────┬──────────────┬──────────┬──────────┐")
+        report.append("│ Circuit                            │ Confidence   │ Score    │ Messages │")
+        report.append("├────────────────────────────────────┼──────────────┼──────────┼──────────┤")
+        
+        # Table rows
+        for flow in correlated_flows:
+            circuit = f"{flow['entry_node'][:8]} → {flow['exit_node'][:8]}"
+            score = flow['correlation_score']
+            confidence = flow['confidence']
+            
+            # Use total number of messages (sum of entry + exit events)
+            total_messages = flow['entry_events'] + flow['exit_events']
+            
+            # Confidence indicator
+            if confidence == 'HIGH':
+                conf_indicator = '🟢 HIGH'
+            elif confidence == 'MEDIUM':
+                conf_indicator = '🟡 MED '
+            else:
+                conf_indicator = '🔴 LOW '
+            
+            report.append(f"│ {circuit:<34} │ {conf_indicator:^11} │ {score:>7.1%}  │ {total_messages:^8} │")
+        
+        report.append("└────────────────────────────────────┴──────────────┴──────────┴──────────┘")
+        
+        # Status message
+        if high_conf:
+            report.append(f"\n✅ ATTACK SUCCESS: {len(high_conf)} circuit(s) deanonymized with high confidence!")
+        elif med_conf:
+            report.append(f"\n⚠️  IN PROGRESS: {len(med_conf)} circuit(s) showing correlation. Continue sending traffic...")
+        else:
+            report.append("\n⏳ MONITORING: Low confidence. More data needed for deanonymization.")
+        
+        report.append("=" * 80)
+        return "\n".join(report)
+
     
+    def get_deanonymized_circuits(self) -> List[Dict]:
+        """
+        Return only high-confidence deanonymized circuits.
+        
+        Returns:
+            List of circuits that have been successfully deanonymized
+        """
+        all_flows = self.perform_cumulative_correlation_attack()
+        return [flow for flow in all_flows if flow['confidence'] == 'HIGH']
     
 
         

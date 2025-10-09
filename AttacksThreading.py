@@ -44,6 +44,41 @@ class ThreadedCorrelationAnalyzer:
             with self.lock:
                 self.results['errors'].append(error_msg)
     
+    def _get_deanonymized_thread(self):
+        """Thread for getting deanonymized circuits"""
+        try:
+            print("[Thread-Deanonymized] Analyzing deanonymized circuits...")
+            start = time.time()
+            deanonymized = self.analyzer.get_deanonymized_circuits()
+            elapsed = time.time() - start
+            
+            with self.lock:
+                self.results['deanonymized'] = deanonymized
+            
+            print(f"[Thread-Deanonymized] ✓ Found {len(deanonymized)} high-confidence circuits in {elapsed:.2f}s")
+        except Exception as e:
+            error_msg = f"Deanonymization analysis failed: {str(e)}"
+            print(f"[Thread-Deanonymized] ✗ {error_msg}")
+            with self.lock:
+                self.results['errors'].append(error_msg)
+    
+    def _get_compromised_info_thread(self):
+        """Thread for getting compromised node info"""
+        try:
+            print("[Thread-NodeInfo] Generating circuit routes for compromised nodes...")
+            start = time.time()
+            self.analyzer.get_info_compromised_nodes()
+            elapsed = time.time() - start
+            
+            with self.lock:
+                self.results['compromised_info'] = True
+            
+            print(f"[Thread-NodeInfo] ✓ Circuit routes generated for {len(self.analyzer.compromised_nodes)} nodes in {elapsed:.2f}s")
+        except Exception as e:
+            error_msg = f"Node info retrieval failed: {str(e)}"
+            print(f"[Thread-NodeInfo] ✗ {error_msg}")
+            with self.lock:
+                self.results['errors'].append(error_msg)
     
     def run_threaded_analysis(self, include_report: bool = True, 
                             include_deanonymized: bool = True,
@@ -75,6 +110,22 @@ class ThreadedCorrelationAnalyzer:
             )
             self.threads.append(report_thread)
         
+        if include_deanonymized:
+            deanon_thread = threading.Thread(
+                target=self._get_deanonymized_thread,
+                name="DeanonymizedThread",
+                daemon=True
+            )
+            self.threads.append(deanon_thread)
+        
+        if include_node_info:
+            nodeinfo_thread = threading.Thread(
+                target=self._get_compromised_info_thread,
+                name="NodeInfoThread",
+                daemon=True
+            )
+            self.threads.append(nodeinfo_thread)
+        
         # Start all threads
         print(f"\nStarting {len(self.threads)} analysis thread(s)...\n")
         for thread in self.threads:
@@ -105,5 +156,25 @@ class ThreadedCorrelationAnalyzer:
         else:
             print("\n⚠️  No report available. Run analysis first or check for errors.")
     
+    def get_deanonymized_summary(self) -> Optional[str]:
+        """Get a summary of deanonymized circuits"""
+        if not self.results['deanonymized']:
+            return None
+        
+        circuits = self.results['deanonymized']
+        summary = ["\n" + "=" * 80]
+        summary.append("DEANONYMIZED CIRCUITS SUMMARY")
+        summary.append("=" * 80)
+        summary.append(f"\nTotal High-Confidence Circuits: {len(circuits)}\n")
+        
+        for i, circuit in enumerate(circuits, 1):
+            summary.append(f"\n{i}. {circuit['entry_node']} → {circuit['exit_node']}")
+            summary.append(f"   Confidence: {circuit['confidence']}")
+            summary.append(f"   Correlation Score: {circuit['correlation_score']:.1%}")
+            summary.append(f"   Sessions: {circuit['num_sessions']}")
+            summary.append(f"   Total Events: {circuit['entry_events']} → {circuit['exit_events']}")
+        
+        summary.append("\n" + "=" * 80)
+        return "\n".join(summary)
 
 

@@ -160,16 +160,12 @@ class TerminalWidget(QWidget):
             if circuit_id not in self.client.circuits:
                 self.manager.add_circuit(self.client_id, circuit_id)
             self.manager.send_message(self.client_id, server_ip, server_port, payload, circuit_id)
-
-            threaded_analyzer = ThreadedCorrelationAnalyzer(self.analyzer)
-            # Run analysis
-            results = threaded_analyzer.run_threaded_analysis()
             
-            # Print report if available
-            threaded_analyzer.print_report()
-            
-
             self.append_log(f"Sending '{payload}' to {server_ip}:{server_port} via circuit {circuit_id}")
+            
+            # Show quick correlation update
+            update_table = self.analyzer.print_correlation_update()
+            print(update_table)
 
         elif command == "status":
             circuits = getattr(self.client, "circuits", {})
