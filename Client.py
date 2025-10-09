@@ -487,8 +487,8 @@ class Client:
             nodes, bandwidth_weight, uptime_weight
         )
 
-        for node in nodes:
-            print(f"{node.type}-{node.id} ({node.compromised})| {probabilities.get(node.id)}")
+        #for node in nodes:
+        #    print(f"{node.type}-{node.id} ({node.compromised})| {probabilities.get(node.id)}")
 
         return random.choices(
             nodes,
