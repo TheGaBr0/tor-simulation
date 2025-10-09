@@ -182,9 +182,6 @@ class Client:
 
         # Send destroy message
         sock.send(destroy_cell.to_bytes())
-
-        _, local_port = sock.getsockname()
-        self.oracle.del_symb_ip(local_port)
         
         # Wait for destroy to propagate through the circuit
         time.sleep(2)
@@ -204,6 +201,8 @@ class Client:
 
         # Only close the connection if no other circuits are using it
         if not other_circuits_using_guard:
+            _, local_port = sock.getsockname()
+            self.oracle.del_symb_ip(local_port)
             self.persistent_connections.pop(f"127.0.0.1:{self.get_guard(circuit_id).port}", None)
             sock.close()
             print(f"Closed connection to guard (no other circuits using it)")
@@ -213,6 +212,7 @@ class Client:
         self.circuits.pop(circuit_id)
 
         self.logger.info(f"Circuit #{circuit_id} destroyed successfully.")
+
         return True
 
     def send_message_to_tor_network(self, server_ip: str, server_port: int, payload: str, circuit_id: int):
@@ -473,9 +473,10 @@ class Client:
         top_scored = sorted_nodes[:top_n]
                 
         top_candidates = [node for node, _ in top_scored]
-        for node in top_candidates:
-            score = node.band_width * bandwidth_weight + node.uptime * uptime_weight
-            print(node.type + "," + node.id + "; Score: " + str(score))
+        
+        #for node in top_candidates:
+            #score = node.band_width * bandwidth_weight + node.uptime * uptime_weight
+            #print(node.type + "," + node.id + "; Score: " + str(score))
 
         selected = random.choice(top_candidates)
         

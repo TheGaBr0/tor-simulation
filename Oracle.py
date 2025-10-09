@@ -6,7 +6,10 @@ class Oracle:
         self.symb_ip_map[port] = symb_ip
 
     def del_symb_ip(self, port):
-        self.symb_ip_map.pop(port)
+        try:
+            self.symb_ip_map.pop(port)
+        except:
+            pass
 
     def get_symb_ip(self, port):
         return self.symb_ip_map.get(port)

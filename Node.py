@@ -146,10 +146,8 @@ class Node:
 
                     if self.compromised:
                         self.compromised_log()
-        except socket.timeout:
-            self.logger.warning(f"Timeout while handling client {client_id}")
-        except Exception as e:
-            self.logger.error(f"Error while handling client {client_id}: {e}", exc_info=True)
+        except:
+            pass
         finally:
             if client_id in self.persistent_connections:
                 del self.persistent_connections[client_id]
@@ -184,6 +182,11 @@ class Node:
             )
             if not still_used and sock_id in self.persistent_connections:
                 sock = self.persistent_connections.pop(sock_id)
+                _, local_port = sock.getsockname()
+                
+                if local_port != self.port:
+                    self.oracle.del_symb_ip(local_port)
+
                 sock.shutdown(socket.SHUT_RDWR)
                 self.logger.info(f"Closed and removed socket {sock_id}")
 
@@ -247,20 +250,17 @@ class Node:
                 if self.type != "exit":
                     self.logger.info(f"Destroying circuit {routing_entry.get_in_circ_id()}-{routing_entry.get_out_circ_id()}...")
 
-                    destroy_cell = TorCell(circid=routing_entry.get_out_circ_id(), cmd=TorCommands.DESTROY, data=b'null')
+                    destroy_cell = TorCell(circid=routing_entry.get_out_circ_id(), cmd=TorCommands.DESTROY, data=encode_payload([data_to_bytes("null")]))
                     forward_sock = self.persistent_connections.get(f"127.0.0.1:{routing_entry.get_dest_coords()[1]}")
 
                     forward_sock.send(destroy_cell.to_bytes())
-
-                    _, local_port = forward_sock.getsockname()
-                    self.oracle.del_symb_ip(local_port)
 
                     if(self.compromised):
                         self.compromised_log()
 
                     self.remove_circuit(routing_entry)
 
-                    self.logger.info(f"Circuit {cell.circid} destroyed")
+                    self.logger.info(f"Circuit {routing_entry.get_in_circ_id()}-{routing_entry.get_out_circ_id()} destroyed")
 
 
                 else:
@@ -282,7 +282,7 @@ class Node:
 
                         self.circuit_stream_socket_map.pop(key)
 
-                    self.logger.info(f"Circuit {cell.circid} destroyed")
+                    self.logger.info(f"Circuit {routing_entry.get_in_circ_id()}-{routing_entry.get_out_circ_id()} destroyed")
 
 
                 
