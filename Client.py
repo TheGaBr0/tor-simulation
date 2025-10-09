@@ -5,7 +5,6 @@ from Directory_Server import DirectoryServer
 from Node import Node
 from typing import List, Optional, Dict, Tuple
 from collections import defaultdict
-
 import time
 import random
 import logging
@@ -20,12 +19,11 @@ logging.basicConfig(
 )
 
 class Client:
-    def __init__(self, id: str, ip: str, port: int, listen_port: int, nodes, choice_algorithm='default'):
+    def __init__(self, id: str, ip: str, port: int, oracle, nodes):
         self.id = id
         self.ip = ip
-        self.choice_algorithm = choice_algorithm
         self.running =False
-
+        self.oracle = oracle
         self.len_of_circuit = None
    
         self.nodes = nodes
@@ -33,7 +31,6 @@ class Client:
         
         self.bind_ip = "127.0.0.1"
         self.port = port
-        self.listen_port = listen_port
         
         self.client_socket: Optional[socket.socket] = None
         self.persistent_connections: Dict[str, socket.socket] = {}
@@ -43,6 +40,8 @@ class Client:
         self.circuit_relays_map: Dict[int, List[int]] = defaultdict(list)
         
         self.logger = logging.getLogger(f"Client-{self.id}")
+
+        self.oracle.add_symb_ip(self.ip, self.port)
 
     def get_guard(self, circuit_id):
         return self.circuits.get(circuit_id)[0]
@@ -59,7 +58,7 @@ class Client:
 
         self.circuits[circuit_id].extend(circuit)
         
-        route_str = "\n    → ".join([f"{n.type.upper()} [{n.ip}:{n.port}] ({n.owner})" for n in circuit])
+        route_str = "\n    → ".join([f"{n.type.upper()}:{n.id} [{n.ip}:{n.port}] ({n.owner})" for n in circuit])
         self.logger.info(f"Circuit #{circuit_id} route established:\n    → {route_str}")
 
 
@@ -100,7 +99,7 @@ class Client:
             x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(node.pub)
             self.g_x1, self.x1 = g_x1, x1
             
-            payload = encode_payload([g_x1_bytes_encrypted, data_to_bytes(node.port), data_to_bytes(node.ip)])
+            payload = encode_payload([g_x1_bytes_encrypted, data_to_bytes(node.port), data_to_bytes(node.ip)], is_relay=True)
             
             relay = RelayCommands.EXTEND
             streamid = data_to_bytes(0)
@@ -130,7 +129,7 @@ class Client:
         x1, g_x1, g_x1_bytes_encrypted = process_dh_handshake_request(self.get_exit(circuit_id).pub)
         self.g_x1, self.x1 = g_x1, x1
         
-        payload = encode_payload([g_x1_bytes_encrypted, data_to_bytes(self.get_exit(circuit_id).port), data_to_bytes(self.get_exit(circuit_id).ip)])
+        payload = encode_payload([g_x1_bytes_encrypted, data_to_bytes(self.get_exit(circuit_id).port), data_to_bytes(self.get_exit(circuit_id).ip)], is_relay=True)
         
         relay = RelayCommands.EXTEND
         streamid = data_to_bytes(0)
@@ -174,7 +173,7 @@ class Client:
 
         self.logger.info(f"Tearing down circuit #{circuit_id}...")
 
-        destroy_cell = TorCell(circid=circuit_id, cmd=TorCommands.DESTROY, data=b'null')
+        destroy_cell = TorCell(circid=circuit_id, cmd=TorCommands.DESTROY, data=encode_payload([data_to_bytes("null")]))
         sock = self.persistent_connections.get(f"127.0.0.1:{self.get_guard(circuit_id).port}")
 
         if not sock:
@@ -183,7 +182,7 @@ class Client:
 
         # Send destroy message
         sock.send(destroy_cell.to_bytes())
-
+        
         # Wait for destroy to propagate through the circuit
         time.sleep(2)
 
@@ -202,6 +201,8 @@ class Client:
 
         # Only close the connection if no other circuits are using it
         if not other_circuits_using_guard:
+            _, local_port = sock.getsockname()
+            self.oracle.del_symb_ip(local_port)
             self.persistent_connections.pop(f"127.0.0.1:{self.get_guard(circuit_id).port}", None)
             sock.close()
             print(f"Closed connection to guard (no other circuits using it)")
@@ -211,6 +212,7 @@ class Client:
         self.circuits.pop(circuit_id)
 
         self.logger.info(f"Circuit #{circuit_id} destroyed successfully.")
+
         return True
 
     def send_message_to_tor_network(self, server_ip: str, server_port: int, payload: str, circuit_id: int):
@@ -234,7 +236,7 @@ class Client:
 
     def enstablish_connection_with_server(self, server_ip: str, server_port: int, circuit_id: int) -> bool:
         
-        payload = encode_payload([data_to_bytes(server_ip), data_to_bytes(server_port)])
+        payload = encode_payload([data_to_bytes(server_ip), data_to_bytes(server_port)], is_relay=True)
 
         used_stream_ids = {item[1] for lst in self.server_stream_circuit_map.values() for item in lst}
         random_stream_id = self._random_stream_id(used_stream_ids)
@@ -261,7 +263,7 @@ class Client:
         return success
     
     def send_message_to_server(self, server_ip: str, server_port: int, payload: str, circuit_id: int) -> bytes:
-        payload = encode_payload([data_to_bytes(payload)])
+        payload = encode_payload([data_to_bytes(payload)], is_relay=True)
 
         key = f"{server_ip}:{server_port}"
         streamid = None
@@ -302,7 +304,7 @@ class Client:
             try:
                 sock = self.persistent_connections[destination_key]
                 sock.sendall(payload)
-                response_data = sock.recv(1000000)
+                response_data = sock.recv(512)
                 
                 if response_data:
                     self.logger.debug(f"Received response from {destination_key}")
@@ -321,12 +323,15 @@ class Client:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.connect((server_ip, server_port))
-            
+
+            _, local_port = sock.getsockname()
+            self.oracle.add_symb_ip(self.ip, local_port)
+        
             # AGGIUNTA: salva la nuova connessione per riutilizzo
             self.persistent_connections[destination_key] = sock
             
             sock.sendall(payload)
-            response_data = sock.recv(1000000)
+            response_data = sock.recv(512)
             
             if response_data:
                 self.logger.debug(f"Received response from {destination_key}")
@@ -468,9 +473,10 @@ class Client:
         top_scored = sorted_nodes[:top_n]
                 
         top_candidates = [node for node, _ in top_scored]
-        for node in top_candidates:
-            score = node.band_width * bandwidth_weight + node.uptime * uptime_weight
-            print(node.type + "," + node.id + "; Score: " + str(score))
+        
+        #for node in top_candidates:
+            #score = node.band_width * bandwidth_weight + node.uptime * uptime_weight
+            #print(node.type + "," + node.id + "; Score: " + str(score))
 
         selected = random.choice(top_candidates)
         

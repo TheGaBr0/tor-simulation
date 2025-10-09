@@ -7,7 +7,7 @@ import logging
 from cryptography.hazmat.primitives import serialization
 
 class DirectoryServer:
-    def __init__(self, ip:str,port:int):
+    def __init__(self, ip:str,port:int, oracle):
         self.ip=ip
         self.bind_ip = "127.0.0.1"
         self.port=port
@@ -17,7 +17,7 @@ class DirectoryServer:
         self.client_socket_query: Optional[socket.socket] = None
         self.running = False
         self.connections: Dict[str, socket.socket] = {}
-
+        self.oracle = oracle
         self.logger = logging.getLogger(f"DirectoryServer")
 
         self._make_network()
@@ -37,7 +37,8 @@ class DirectoryServer:
                 uptime=self._random_uptime(compromised),  # aggiunto uptime
                 owner=self._random_owner(compromised),
                 port=first_port,
-                compromise=compromised
+                compromise=compromised,
+                oracle=self.oracle
             )
             self.guards.append(new_node)
             first_port += 1
@@ -52,7 +53,8 @@ class DirectoryServer:
                 uptime=self._random_uptime(compromised),  # aggiunto uptime
                 owner=self._random_owner(compromised),
                 port=first_port,
-                compromise=compromised
+                compromise=compromised,
+                oracle=self.oracle
             )
             self.relays.append(new_node)
             first_port += 1
@@ -67,7 +69,8 @@ class DirectoryServer:
                 uptime=self._random_uptime(compromised),  # aggiunto uptime
                 owner=self._random_owner(compromised),
                 port=first_port,
-                compromise=compromised
+                compromise=compromised,
+                oracle=self.oracle
             )
             self.exits.append(new_node)
             first_port += 1
