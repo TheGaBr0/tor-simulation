@@ -67,7 +67,6 @@ class ThreadedCorrelationAnalyzer:
         try:
             print("[Thread-NodeInfo] Generating circuit routes for compromised nodes...")
             start = time.time()
-            self.analyzer.get_info_compromised_nodes()
             elapsed = time.time() - start
             
             with self.lock:
