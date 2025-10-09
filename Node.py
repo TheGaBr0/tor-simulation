@@ -191,11 +191,6 @@ class Node:
         for key, val in rows:
             print(f"{key:<{max_key_len}} : {val}")
         print("=" * (max_key_len + 30))
-
-
-    def generate_circuit_route(self):
-         for entry in self.routing_table:
-              self.print_routing_entry_table(entry)
          
         
 
