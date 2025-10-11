@@ -496,7 +496,7 @@ class CorrelationAttackAnalyzer:
         
         # Table header (renamed “Sessions” → “Messages”)
         report.append("\n┌────────────────────────────────────┬──────────────┬──────────┬──────────┐")
-        report.append("│ Circuit                            │ Confidence   │ Score    │ Messages │")
+        report.append("│ Circuit                            │ Confidence   │ Score    │ Logs     │")
         report.append("├────────────────────────────────────┼──────────────┼──────────┼──────────┤")
         
         # Table rows
