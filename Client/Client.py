@@ -2,14 +2,14 @@ from Utils.Cryptograpy_utils import *
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.backends import default_backend
 from Server.Directory_Server import DirectoryServer
-from Node.Node import Node
+from TorNetwork.Node import Node
 from typing import List, Optional, Dict, Tuple
 from collections import defaultdict
 import time
 import random
 import logging
 import socket
-from Node.TorMessage import *
+from TorNetwork.TorMessage import *
 from collections import defaultdict
 
 logging.basicConfig(
