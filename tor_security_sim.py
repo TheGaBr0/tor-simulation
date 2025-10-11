@@ -506,7 +506,8 @@ class CorrelationAttackAnalyzer:
             confidence = flow['confidence']
             
             # Use total number of messages (sum of entry + exit events)
-            total_messages = flow['entry_events'] + flow['exit_events']
+            total_messages = (flow['entry_events'] + flow['exit_events'])
+            total_messages=total_messages/6
             
             # Confidence indicator
             if confidence == 'HIGH':
@@ -529,6 +530,8 @@ class CorrelationAttackAnalyzer:
             report.append("\n⏳ MONITORING: Low confidence. More data needed for deanonymization.")
         
         report.append("=" * 80)
+        for node in self.compromised_nodes:
+            print(len(node.timing_data))
         return "\n".join(report)
 
     
