@@ -2,19 +2,19 @@ import threading
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QTimer, QObject, pyqtSignal
 import sys
-from Client import Client
-from Server import Server
-from Directory_Server import DirectoryServer
-from Interface import DynamicNetworkEditor
-from ClientTerminalWidget import TerminalWidget
-from NodeTerminalWidget import NodeTerminal
-from ServerTerminalWindow import ServerTerminal
+from Client.Client import Client
+from Server.Server import Server
+from Server.Directory_Server import DirectoryServer
+from View.Interface import DynamicNetworkEditor
+from Client.ClientTerminalWidget import TerminalWidget
+from TorNetwork.NodeTerminalWidget import NodeTerminal
+from Server.ServerTerminalWindow import ServerTerminal
 import random
 import time
-from tor_security_sim import *
-from Statistic_Inference import *
-from Oracle import Oracle
-from Statistic_Inference import *
+from Attacks.tor_security_sim import *
+from Attacks.Statistic_Inference import *
+from Utils.Oracle import Oracle
+from Attacks.Statistic_Inference import *
 
 def random_ipv4() -> str:
     """Return a random IPv4 address."""

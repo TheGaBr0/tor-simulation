@@ -530,8 +530,7 @@ class CorrelationAttackAnalyzer:
             report.append("\n⏳ MONITORING: Low confidence. More data needed for deanonymization.")
         
         report.append("=" * 80)
-        for node in self.compromised_nodes:
-            print(len(node.timing_data))
+
         return "\n".join(report)
 
     

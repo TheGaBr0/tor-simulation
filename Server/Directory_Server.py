@@ -1,4 +1,4 @@
-from Node import Node
+from Node.Node import Node
 from typing import List
 import socket
 from typing import Optional, Dict

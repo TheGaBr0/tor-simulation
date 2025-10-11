@@ -2,9 +2,9 @@ import threading
 import socket
 import logging
 from typing import Optional, Dict
-from Cryptograpy_utils import *
+from Utils.Cryptograpy_utils import *
 import json
-from TorMessage import *
+from TorNetwork.TorMessage import *
 
 RECORDS = {
     "alpha": "Record A",
