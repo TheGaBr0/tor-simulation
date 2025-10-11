@@ -11,7 +11,7 @@ from TorNetwork.NodeTerminalWidget import NodeTerminal
 from Server.ServerTerminalWindow import ServerTerminal
 import random
 import time
-from Attacks.tor_security_sim import *
+from Attacks.Correlation_Inference import *
 from Attacks.Statistic_Inference import *
 from Utils.Oracle import Oracle
 from Attacks.Statistic_Inference import *

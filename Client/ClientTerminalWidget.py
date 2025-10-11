@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTextEdit, QLineEdit,
 from PyQt6.QtGui import QFont, QTextCursor
 from PyQt6.QtCore import Qt, pyqtSignal, QMetaObject, Q_ARG, pyqtSlot, QTimer
 import logging
-from Attacks.tor_security_sim import *
+from Attacks.Correlation_Inference import *
 from Attacks.AttacksThreading import *
 
 
