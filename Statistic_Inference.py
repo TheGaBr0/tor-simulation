@@ -55,7 +55,9 @@ class Probabilities:
         exit_probs = self._calculate_node_probabilities(self.exit_nodes)
 
         total_attack_prob = 0.0
+        total_full_compromise_prob = 0.0
         compromised_count = 0
+        fully_compromised_count = 0
         total_circuits = 0
 
         middle_combinations = list(permutations(self.middle_nodes, self.num_middle_nodes))
@@ -75,23 +77,34 @@ class Probabilities:
                     for middle_node in middle_combo:
                         circuit_prob *= middle_probs.get(middle_node.id, 0)
 
+                    # Correlation attack (guard AND exit compromised)
                     if guard.compromised and exit_node.compromised:
                         total_attack_prob += circuit_prob
                         compromised_count += 1
 
+                    # Full compromise (ALL nodes compromised)
+                    if guard.compromised and exit_node.compromised and all(m.compromised for m in middle_combo):
+                        total_full_compromise_prob += circuit_prob
+                        fully_compromised_count += 1
+
         guard_compromise_rate = (sum(1 for g in self.guard_nodes if g.compromised) / len(self.guard_nodes)) if self.guard_nodes else 0
         exit_compromise_rate = (sum(1 for e in self.exit_nodes if e.compromised) / len(self.exit_nodes)) if self.exit_nodes else 0
+        middle_compromise_rate = (sum(1 for m in self.middle_nodes if m.compromised) / len(self.middle_nodes)) if self.middle_nodes else 0
 
         return {
             'total_attack_probability': total_attack_prob,
+            'total_full_compromise_probability': total_full_compromise_prob,
             'guard_compromise_rate': guard_compromise_rate,
+            'middle_compromise_rate': middle_compromise_rate,
             'exit_compromise_rate': exit_compromise_rate,
             'compromised_circuits': compromised_count,
+            'fully_compromised_circuits': fully_compromised_count,
             'total_circuits': total_circuits,
-            'vulnerable_percentage': (compromised_count / total_circuits * 100) if total_circuits > 0 else 0
+            'vulnerable_percentage': (compromised_count / total_circuits * 100) if total_circuits > 0 else 0,
+            'fully_compromised_percentage': (fully_compromised_count / total_circuits * 100) if total_circuits > 0 else 0
         }
 
-    def get_vulnerable_circuits(self, top_n: int = 10):
+    def get_vulnerable_circuits(self, top_n: int = 10, fully_compromised_only: bool = False):
         guard_probs = self._calculate_node_probabilities(self.guard_nodes)
         middle_probs = self._calculate_node_probabilities(self.middle_nodes)
         exit_probs = self._calculate_node_probabilities(self.exit_nodes)
@@ -106,16 +119,29 @@ class Probabilities:
                     circuit_ids.update(m.id for m in middle_combo)
                     if len(circuit_ids) < 2 + self.num_middle_nodes:
                         continue
-                    if guard.compromised and exit_node.compromised:
-                        circuit_prob = guard_probs.get(guard.id, 0) * exit_probs.get(exit_node.id, 0)
-                        for m in middle_combo:
-                            circuit_prob *= middle_probs.get(m.id, 0)
-                        vulnerable_circuits.append({
-                            'guard_id': guard.id,
-                            'middle_ids': [m.id for m in middle_combo],
-                            'exit_id': exit_node.id,
-                            'probability': circuit_prob
-                        })
+                    
+                    # Check for correlation attack (guard and exit)
+                    is_correlation_vulnerable = guard.compromised and exit_node.compromised
+                    # Check for full compromise (all nodes)
+                    is_fully_compromised = is_correlation_vulnerable and all(m.compromised for m in middle_combo)
+                    
+                    if fully_compromised_only:
+                        if not is_fully_compromised:
+                            continue
+                    else:
+                        if not is_correlation_vulnerable:
+                            continue
+                    
+                    circuit_prob = guard_probs.get(guard.id, 0) * exit_probs.get(exit_node.id, 0)
+                    for m in middle_combo:
+                        circuit_prob *= middle_probs.get(m.id, 0)
+                    vulnerable_circuits.append({
+                        'guard_id': guard.id,
+                        'middle_ids': [m.id for m in middle_combo],
+                        'exit_id': exit_node.id,
+                        'probability': circuit_prob,
+                        'fully_compromised': is_fully_compromised
+                    })
 
         vulnerable_circuits.sort(key=lambda x: x['probability'], reverse=True)
         return vulnerable_circuits[:top_n]
@@ -145,3 +171,45 @@ class Probabilities:
             node.compromised = original_states.get(node.id, False)
 
         return results
+
+    def display_attack_results(self, results: dict):
+        """
+        Display attack probability results in a clean, minimal format.
+        Supports both single-run and multi-scenario results.
+        """
+
+        def format_single(result: dict):
+            lines = [
+                "📊  Correlation Attack Analysis",
+                "───────────────────────────────",
+                f"Total Circuits:                    {result['total_circuits']:,}",
+                "",
+                "Correlation Attack (Guard + Exit compromised):",
+                f"  Vulnerable Circuits:             {result['compromised_circuits']:,}",
+                f"  Vulnerable Percentage:           {result['vulnerable_percentage']:.2f}%",
+                f"  Attack Probability:              {result['total_attack_probability']:.2%}",
+                "",
+                "Full Compromise (All nodes compromised):",
+                f"  Fully Compromised Circuits:      {result['fully_compromised_circuits']:,}",
+                f"  Fully Compromised Percentage:    {result['fully_compromised_percentage']:.2f}%",
+                f"  Full Compromise Probability:     {result['total_full_compromise_probability']:.2%}",
+                "",
+                "Node Compromise Rates:",
+                f"  Guard:                           {result['guard_compromise_rate']:.2%}",
+                f"  Middle:                          {result['middle_compromise_rate']:.2%}",
+                f"  Exit:                            {result['exit_compromise_rate']:.2%}",
+            ]
+            return "\n".join(lines)
+
+        # Case 1: Results for multiple compromise rates (from simulate_attack_scenarios)
+        if all(isinstance(v, dict) for v in results.values()):
+            print("🧪  Simulation Results Across Compromise Rates")
+            print("──────────────────────────────────────────────")
+            print(f"{'Rate':>6} | {'Vuln %':>9} | {'Full %':>9} | {'Corr. Prob':>12} | {'Full Prob':>12}")
+            print("-" * 62)
+            for rate, res in results.items():
+                print(f"{rate:>5.2f} | {res['vulnerable_percentage']:>8.2f}% | {res['fully_compromised_percentage']:>8.2f}% | {res['total_attack_probability']:>11.6f} | {res['total_full_compromise_probability']:>11.6f}")
+            print("-" * 62)
+        else:
+            # Case 2: Single result dictionary
+            print(format_single(results))

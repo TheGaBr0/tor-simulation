@@ -492,7 +492,7 @@ def main():
     # Set nodes and analyze
     AttackProb.set_nodes(entry_nodes, middle_nodes, exit_nodes)
     results = AttackProb.calculate_correlation_attack_probability()
-    print(results)
+    AttackProb.display_attack_results(results)
 
 
     analyzer = CorrelationAttackAnalyzer(
