@@ -6,15 +6,17 @@ import time
 
 class ThreadedCorrelationAnalyzer:
     """
-    Threaded wrapper for CorrelationAttackAnalyzer to run analysis tasks concurrently.
+    Multi-threaded wrapper for correlation attack analysis.
+    Executes multiple analysis tasks concurrently to improve performance
+    when processing large amounts of timing data.
     """
     
     def __init__(self, analyzer):
         """
-        Initialize with an existing CorrelationAttackAnalyzer instance.
+        Initialize the threaded analyzer wrapper.
         
         Args:
-            analyzer: CorrelationAttackAnalyzer instance
+            analyzer: CorrelationAttackAnalyzer instance to run analysis on
         """
         self.analyzer = analyzer
         self.results = {
@@ -27,13 +29,17 @@ class ThreadedCorrelationAnalyzer:
         self.lock = threading.Lock()
         
     def _generate_report_thread(self):
-        """Thread for generating cumulative attack report"""
+        """
+        Worker thread for generating cumulative attack report.
+        Executes in parallel with other analysis tasks.
+        """
         try:
             print("[Thread-Report] Generating cumulative attack report...")
             start = time.time()
             report = self.analyzer.generate_cumulative_attack_report()
             elapsed = time.time() - start
             
+            # Thread-safe result storage
             with self.lock:
                 self.results['report'] = report
             
@@ -45,13 +51,17 @@ class ThreadedCorrelationAnalyzer:
                 self.results['errors'].append(error_msg)
     
     def _get_deanonymized_thread(self):
-        """Thread for getting deanonymized circuits"""
+        """
+        Worker thread for identifying deanonymized circuits.
+        Filters and returns only high-confidence correlations.
+        """
         try:
             print("[Thread-Deanonymized] Analyzing deanonymized circuits...")
             start = time.time()
             deanonymized = self.analyzer.get_deanonymized_circuits()
             elapsed = time.time() - start
             
+            # Thread-safe result storage
             with self.lock:
                 self.results['deanonymized'] = deanonymized
             
@@ -63,13 +73,17 @@ class ThreadedCorrelationAnalyzer:
                 self.results['errors'].append(error_msg)
     
     def _get_compromised_info_thread(self):
-        """Thread for getting compromised node info"""
+        """
+        Worker thread for generating circuit route information.
+        Collects and displays routing data for all compromised nodes.
+        """
         try:
             print("[Thread-NodeInfo] Generating circuit routes for compromised nodes...")
             start = time.time()
             self.analyzer.get_info_compromised_nodes()
             elapsed = time.time() - start
             
+            # Thread-safe result storage
             with self.lock:
                 self.results['compromised_info'] = True
             
@@ -84,15 +98,8 @@ class ThreadedCorrelationAnalyzer:
                             include_deanonymized: bool = True,
                             include_node_info: bool = True) -> Dict:
         """
-        Run correlation analysis with threading.
-        
-        Args:
-            include_report: Generate cumulative attack report
-            include_deanonymized: Get deanonymized circuits
-            include_node_info: Generate circuit routes for compromised nodes
-            
-        Returns:
-            Dictionary containing all results
+        Execute correlation analysis using multiple threads for parallel processing.
+        Significantly reduces analysis time when multiple tasks are requested.
         """
         print("\n" + "=" * 80)
         print("STARTING THREADED CORRELATION ATTACK ANALYSIS")
@@ -101,12 +108,12 @@ class ThreadedCorrelationAnalyzer:
         start_time = time.time()
         self.threads = []
         
-        # Create threads based on requested analyses
+        # Create worker threads based on requested analyses
         if include_report:
             report_thread = threading.Thread(
                 target=self._generate_report_thread,
                 name="ReportThread",
-                daemon=True
+                daemon=True  # Thread terminates when main program exits
             )
             self.threads.append(report_thread)
         
@@ -126,7 +133,7 @@ class ThreadedCorrelationAnalyzer:
             )
             self.threads.append(nodeinfo_thread)
         
-        # Start all threads
+        # Launch all threads
         print(f"\nStarting {len(self.threads)} analysis thread(s)...\n")
         for thread in self.threads:
             thread.start()
@@ -141,7 +148,7 @@ class ThreadedCorrelationAnalyzer:
         print(f"ANALYSIS COMPLETE - Total time: {elapsed:.2f}s")
         print("=" * 80)
         
-        # Print any errors
+        # Report any errors that occurred
         if self.results['errors']:
             print("\n⚠️  ERRORS ENCOUNTERED:")
             for error in self.results['errors']:
@@ -150,14 +157,19 @@ class ThreadedCorrelationAnalyzer:
         return self.results
     
     def print_report(self):
-        """Print the generated report if available"""
+        """
+        Display the generated correlation attack report.
+        Must be called after run_threaded_analysis() completes.
+        """
         if self.results['report']:
             print("\n" + self.results['report'])
         else:
             print("\n⚠️  No report available. Run analysis first or check for errors.")
     
     def get_deanonymized_summary(self) -> Optional[str]:
-        """Get a summary of deanonymized circuits"""
+        """
+        Generate a formatted summary of successfully deanonymized circuits.
+        """
         if not self.results['deanonymized']:
             return None
         
@@ -167,6 +179,7 @@ class ThreadedCorrelationAnalyzer:
         summary.append("=" * 80)
         summary.append(f"\nTotal High-Confidence Circuits: {len(circuits)}\n")
         
+        # List each deanonymized circuit with key metrics
         for i, circuit in enumerate(circuits, 1):
             summary.append(f"\n{i}. {circuit['entry_node']} → {circuit['exit_node']}")
             summary.append(f"   Confidence: {circuit['confidence']}")
@@ -176,5 +189,3 @@ class ThreadedCorrelationAnalyzer:
         
         summary.append("\n" + "=" * 80)
         return "\n".join(summary)
-
-

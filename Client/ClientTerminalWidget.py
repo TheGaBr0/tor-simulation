@@ -8,12 +8,19 @@ from Attacks.AttacksThreading import *
 
 
 class TerminalHandler(logging.Handler):
-    """Custom logging handler that emits signals for Qt integration"""
+    """
+    Custom logging handler that integrates with PyQt6's signal/slot mechanism.
+    This allows log messages to be safely displayed in the GUI from any thread.
+    """
     def __init__(self, terminal_widget):
         super().__init__()
         self.terminal_widget = terminal_widget
         
     def emit(self, record):
+        """
+        Emit a log record to the terminal widget using Qt's thread-safe method invocation.
+        This ensures that GUI updates happen on the main thread.
+        """
         try:
             msg = self.format(record)
             QMetaObject.invokeMethod(
@@ -27,27 +34,32 @@ class TerminalHandler(logging.Handler):
 
 
 class TerminalWidget(QWidget):
-    """Terminal widget for displaying client logs and accepting commands"""
+    """
+    Terminal interface for interacting with Tor clients.
+    Displays real-time logs and accepts user commands for circuit management.
+    """
     log_signal = pyqtSignal(str)
     
     def __init__(self, client_id, client, analyzer, manager=None, editor=None):
         super().__init__()
         self.client_id = client_id
         self.client = client
-        self.manager = manager   # 🔹 now holds reference to EntityConnectionManager
+        self.manager = manager  # Reference to EntityConnectionManager for circuit operations
         self.editor = editor
         self.analyzer = analyzer
         
         self.setWindowTitle(f"Terminal - {client_id}")
         self.resize(800, 600)
         
-        # --- UI setup (unchanged) ---
+        # Setup the terminal UI layout
         layout = QVBoxLayout()
         
+        # Header showing which client this terminal belongs to
         header = QLabel(f"Client Terminal: {client_id}")
         header.setStyleSheet("font-size: 14pt; font-weight: bold; padding: 5px;")
         layout.addWidget(header)
         
+        # Terminal output area with dark theme styling
         self.output = QTextEdit()
         self.output.setReadOnly(True)
         self.output.setStyleSheet("""
@@ -61,6 +73,7 @@ class TerminalWidget(QWidget):
         """)
         layout.addWidget(self.output)
         
+        # Command input area with prompt
         input_layout = QHBoxLayout()
         self.prompt_label = QLabel(f"{client_id}> ")
         self.prompt_label.setStyleSheet("color: #00ff00; font-family: 'Courier New', monospace;")
@@ -82,7 +95,7 @@ class TerminalWidget(QWidget):
         layout.addLayout(input_layout)
         self.setLayout(layout)
         
-        # Logging integration
+        # Setup custom logging handler to redirect client logs to this terminal
         handler = TerminalHandler(self)
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
         handler.setFormatter(formatter)
@@ -91,10 +104,10 @@ class TerminalWidget(QWidget):
         self.client.logger.setLevel(logging.INFO)
         self.client.logger.propagate = False
         
-        # Connect input
+        # Connect enter key to command processing
         self.input.returnPressed.connect(self.process_command)
         
-        # Initial messages
+        # Display welcome message and basic info
         self.append_log(f"Terminal initialized for {client_id}")
         self.append_log(f"--- Listening on {client.ip} {client.port} ---")
         self.append_log("Type 'connect <circuit_id>' to establish Tor connection")
@@ -102,14 +115,20 @@ class TerminalWidget(QWidget):
     
     @pyqtSlot(str)
     def append_log(self, message: str):
-        """Append a log message to the terminal - thread-safe"""
+        """
+        Append a message to the terminal output.
+        Thread-safe via Qt's slot mechanism.
+        """
         self.output.append(message)
         cursor = self.output.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         self.output.setTextCursor(cursor)
     
     def process_command(self):
-        """Parse and execute a terminal command"""
+        """
+        Parse and execute user commands entered in the terminal.
+        Supports circuit management and message sending operations.
+        """
         input_text = self.input.text().strip()
         self.input.clear()
         if not input_text:
@@ -120,6 +139,7 @@ class TerminalWidget(QWidget):
         args = parts[1:]
 
         if command == "connect":
+            # Establish a new Tor circuit
             if len(args) != 1:
                 self.append_log("Usage: connect <circuit_id>")
                 return
@@ -131,9 +151,11 @@ class TerminalWidget(QWidget):
             if circuit_id not in self.manager.clients[self.client_id]['circuits']:
                 self.manager.add_circuit(self.client_id, circuit_id)
             self.append_log(f"Connecting circuit {circuit_id}...")
+            # Use QTimer to avoid blocking the GUI thread
             QTimer.singleShot(100, lambda: self.manager.connect_client(self.client_id, circuit_id))
 
         elif command == "destroy":
+            # Tear down an existing circuit
             if len(args) != 1:
                 self.append_log("Usage: destroy <circuit_id>")
                 return
@@ -146,6 +168,7 @@ class TerminalWidget(QWidget):
             QTimer.singleShot(100, lambda: self.manager.destroy_client_circuit(self.client_id, circuit_id))
 
         elif command == "send":
+            # Send a message through a Tor circuit to a destination server
             if len(args) < 4:
                 self.append_log("Usage: send <server_ip> <server_port> <message> <circuit_id>")
                 return
@@ -157,17 +180,20 @@ class TerminalWidget(QWidget):
                 self.append_log("ERROR: Port and circuit_id must be integers")
                 return
             payload = " ".join(args[2:-1])
+            
+            # Create circuit if it doesn't exist yet
             if circuit_id not in self.client.circuits:
                 self.manager.add_circuit(self.client_id, circuit_id)
-            self.manager.send_message(self.client_id, server_ip, server_port, payload, circuit_id)
             
+            self.manager.send_message(self.client_id, server_ip, server_port, payload, circuit_id)
             self.append_log(f"Sending '{payload}' to {server_ip}:{server_port} via circuit {circuit_id}")
             
-            # Show quick correlation update
+            # Display correlation analysis update (for attack demonstration)
             update_table = self.analyzer.print_correlation_update()
             print(update_table)
 
         elif command == "status":
+            # Show current state of all circuits for this client
             circuits = getattr(self.client, "circuits", {})
             if not circuits:
                 self.append_log("No circuits registered for this client")
@@ -182,12 +208,14 @@ class TerminalWidget(QWidget):
                 self.append_log(f"  Circuit {cid}: {status} -> Path: {node_ids}")
 
         elif command == "clear":
+            # Clear the terminal output
             self.output.clear()
             self.append_log(f"Terminal initialized for {self.client_id}")
             self.append_log("Type 'connect <circuit_id>' to establish Tor connection")
             self.append_log("Type 'help' for available commands")
 
         elif command == "help":
+            # Display available commands
             self.append_log("Available commands:")
             self.append_log("  connect <circuit_id>                 - Establish connection to Tor network")
             self.append_log("  destroy <circuit_id>                 - Destroy a circuit")
@@ -200,9 +228,11 @@ class TerminalWidget(QWidget):
             self.append_log(f"Unknown command: {command}")
 
     def closeEvent(self, event):
-        """Clean up logging handler when terminal closes"""
+        """
+        Cleanup when the terminal window is closed.
+        Removes the logging handler to prevent memory leaks.
+        """
         for handler in self.client.logger.handlers[:]:
             if isinstance(handler, TerminalHandler):
                 self.client.logger.removeHandler(handler)
         event.accept()
-

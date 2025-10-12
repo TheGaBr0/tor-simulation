@@ -3,37 +3,31 @@ from typing import List, Dict, Set, Tuple, Optional
 from collections import defaultdict
 import statistics
 
+
 class CorrelationAttackAnalyzer:
     """
-    Performs timing correlation attacks on Tor networks by analyzing
-    timestamp patterns from compromised nodes.
+    Implements end-to-end timing correlation attacks on Tor circuits.
+    Analyzes timestamp patterns from compromised guard and exit nodes to link
+    anonymous traffic flows and deanonymize users.
     """
     
     def __init__(self, compromised_nodes: List, time_window: float = 2.0, 
                  correlation_threshold: float = 0.7):
         """
         Initialize the correlation attack analyzer.
-        
-        Args:
-            compromised_nodes: List of compromised Node objects
-            time_window: Time window in seconds for correlating events (default: 2.0s)
-            correlation_threshold: Minimum correlation score to link flows (0-1)
         """
         self.compromised_nodes = compromised_nodes
         self.time_window = time_window
         self.correlation_threshold = correlation_threshold
         
-        # Separate entry and exit nodes
+        # Categorize compromised nodes by their position in the network
         self.entry_nodes = [node for node in compromised_nodes if node.type == "guard"]
         self.exit_nodes = [node for node in compromised_nodes if node.type == "exit"]
         self.middle_nodes = [node for node in compromised_nodes if node.type == "relay"]
         
     def collect_timing_data(self) -> Dict[str, List[float]]:
         """
-        Collect timing data from all compromised nodes.
-        
-        Returns:
-            Dictionary mapping node_id to list of timestamps
+        Extract timing information from all compromised nodes.
         """
         timing_data = {}
         for node in self.compromised_nodes:
@@ -42,32 +36,26 @@ class CorrelationAttackAnalyzer:
     
     def _create_time_series(self, timestamps: List[float]) -> List[Tuple[float, int]]:
         """
-        Convert raw timestamps into a time series of event counts per interval.
-        
-        Args:
-            timestamps: List of raw timestamps
-            
-        Returns:
-            List of (time_bucket, event_count) tuples
+        Convert raw timestamps into a time series with fixed intervals.
+        Groups events into 100ms buckets for pattern analysis.
         """
         if not timestamps:
             return []
         
-        # Sort timestamps
         sorted_times = sorted(timestamps)
         
-        # Create time buckets (100ms intervals for granularity)
+        # Use 100ms buckets for fine-grained correlation
         bucket_size = 0.1
         min_time = sorted_times[0]
         max_time = sorted_times[-1]
         
-        # Count events per bucket
+        # Count events per time bucket
         buckets = defaultdict(int)
         for ts in sorted_times:
             bucket = int((ts - min_time) / bucket_size)
             buckets[bucket] += 1
         
-        # Convert to time series
+        # Generate time series representation
         time_series = [(min_time + bucket * bucket_size, count) 
                        for bucket, count in sorted(buckets.items())]
         
@@ -76,57 +64,49 @@ class CorrelationAttackAnalyzer:
     def _calculate_correlation_score(self, entry_times: List[float], 
                                      exit_times: List[float]) -> float:
         """
-        Calculate correlation score between entry and exit timing patterns.
-        Uses a bidirectional matching approach with penalties.
+        Calculate timing correlation score between entry and exit node traffic.
+        Uses bidirectional greedy matching with balance penalties.
         
         Algorithm:
         1. For each entry event, find the closest exit event within time_window
-        2. Each exit event can only be matched once (greedy matching)
-        3. Calculate base score as: (matched_events) / (total_events)
-        4. Apply balance penalty if one side has many more events than the other
-        
-        Args:
-            entry_times: Timestamps from entry node
-            exit_times: Timestamps from exit node
-            
-        Returns:
-            Correlation score between 0 and 1
+        2. Use greedy matching - each exit event can only match once
+        3. Calculate base score: (matched_events) / (total_events)
+        4. Apply penalty if entry/exit event counts are significantly imbalanced
         """
         if not entry_times or not exit_times:
             return 0.0
         
-        # Create time series for both
+        # Convert to time series for pattern analysis
         entry_series = self._create_time_series(entry_times)
         exit_series = self._create_time_series(exit_times)
         
         if not entry_series or not exit_series:
             return 0.0
         
-        # Find overlapping time window
+        # Extract temporal bounds
         entry_start = entry_series[0][0]
         entry_end = entry_series[-1][0]
         exit_start = exit_series[0][0]
         exit_end = exit_series[-1][0]
         
-        # Check for temporal overlap (accounting for network delay)
-        max_delay = 1.0  # Maximum expected Tor network delay in seconds
+        # Check for temporal overlap (accounting for network propagation delay)
+        max_delay = 1.0  # Maximum expected Tor latency
         
         if exit_start > entry_end + max_delay or entry_start > exit_end + max_delay:
-            return 0.0  # No temporal overlap
+            return 0.0  # No temporal overlap possible
         
-        # Bidirectional matching with penalties
+        # Perform bidirectional greedy matching
         entry_matched = 0
         used_exits = set()
         
-        # Match entry events to exit events (greedy: find closest match)
+        # Match each entry event to the closest available exit event
         for entry_time in entry_times:
             best_match = None
             best_distance = float('inf')
             
-            # Find the closest unused exit event within the time window
             for i, exit_time in enumerate(exit_times):
                 if i in used_exits:
-                    continue  # This exit was already matched
+                    continue  # This exit event already matched
                     
                 distance = abs(exit_time - entry_time)
                 
@@ -136,25 +116,22 @@ class CorrelationAttackAnalyzer:
             
             if best_match is not None:
                 entry_matched += 1
-                used_exits.add(best_match)  # Mark this exit as used
+                used_exits.add(best_match)
         
-        # Count how many exit events got matched
         exit_matched = len(used_exits)
         
-        # Calculate score considering both directions
+        # Calculate base correlation score
         total_events = len(entry_times) + len(exit_times)
         matched_events = entry_matched + exit_matched
-        
-        # Base correlation score: how many events were successfully paired
         base_score = matched_events / total_events if total_events > 0 else 0.0
         
-        # Penalty for imbalanced matching
+        # Apply balance penalty for asymmetric matching
         entry_ratio = entry_matched / len(entry_times) if len(entry_times) > 0 else 0.0
         exit_ratio = exit_matched / len(exit_times) if len(exit_times) > 0 else 0.0
-        balance_factor = min(entry_ratio, exit_ratio) / max(entry_ratio, exit_ratio) if max(entry_ratio, exit_ratio) > 0 else 0.0
+        balance_factor = (min(entry_ratio, exit_ratio) / max(entry_ratio, exit_ratio) 
+                         if max(entry_ratio, exit_ratio) > 0 else 0.0)
         
-        # Final score with balance consideration
-        # 70% weight on base score, 30% on balance
+        # Final score: 70% base + 30% balance
         correlation = base_score * (0.7 + 0.3 * balance_factor)
         
         return min(correlation, 1.0)
@@ -162,14 +139,8 @@ class CorrelationAttackAnalyzer:
     def _find_session_boundaries(self, timestamps: List[float], 
                                  gap_threshold: float = 5.0) -> List[Tuple[float, float]]:
         """
-        Identify distinct sessions based on gaps in activity.
-        
-        Args:
-            timestamps: List of timestamps
-            gap_threshold: Minimum gap in seconds to consider a new session
-            
-        Returns:
-            List of (session_start, session_end) tuples
+        Identify distinct communication sessions based on temporal gaps.
+        Sessions are separated when inactivity exceeds the gap threshold.
         """
         if not timestamps:
             return []
@@ -181,22 +152,18 @@ class CorrelationAttackAnalyzer:
         for i in range(1, len(sorted_times)):
             gap = sorted_times[i] - sorted_times[i-1]
             if gap > gap_threshold:
-                # End current session
+                # End current session and start a new one
                 sessions.append((session_start, sorted_times[i-1]))
-                # Start new session
                 session_start = sorted_times[i]
         
-        # Add final session
+        # Add the final session
         sessions.append((session_start, sorted_times[-1]))
         
         return sessions
     
     def get_timing_statistics(self) -> Dict:
         """
-        Get statistical analysis of timing patterns.
-        
-        Returns:
-            Dictionary with timing statistics
+        Compute statistical metrics for timing patterns at each compromised node.
         """
         timing_data = self.collect_timing_data()
         stats = {}
@@ -206,6 +173,7 @@ class CorrelationAttackAnalyzer:
                 continue
                 
             sorted_times = sorted(timestamps)
+            # Calculate gaps between consecutive events
             inter_arrival_times = [sorted_times[i+1] - sorted_times[i] 
                                   for i in range(len(sorted_times)-1)]
             
@@ -221,7 +189,9 @@ class CorrelationAttackAnalyzer:
     
     def _calculate_confidence(self, correlation_score: float, 
                             entry_events: int, exit_events: int) -> str:
-        """Calculate confidence for individual sessions."""
+        """
+        Determine confidence level for a single correlation session.
+        """
         min_events = min(entry_events, exit_events)
         
         if correlation_score >= 0.85 and min_events >= 15:
@@ -233,19 +203,17 @@ class CorrelationAttackAnalyzer:
     
     def perform_correlation_attack(self) -> List[Dict]:
         """
-        Execute the timing correlation attack to link entry and exit traffic.
-        
-        Returns:
-            List of correlated flows with their metadata
+        Execute basic timing correlation attack on collected data.
+        Links entry and exit traffic by analyzing individual sessions.
         """
         timing_data = self.collect_timing_data()
         correlated_flows = []
         
-        # Remove duplicate nodes by ID
+        # Deduplicate nodes by ID
         unique_entry_nodes = list({node.id: node for node in self.entry_nodes}.values())
         unique_exit_nodes = list({node.id: node for node in self.exit_nodes}.values())
         
-        # Analyze each entry node
+        # Analyze each guard node
         for entry_node in unique_entry_nodes:
             entry_times = timing_data.get(entry_node.id, [])
             if not entry_times:
@@ -253,7 +221,7 @@ class CorrelationAttackAnalyzer:
             
             entry_sessions = self._find_session_boundaries(entry_times)
             
-            # Try to correlate with each exit node
+            # Try correlating with each exit node
             for exit_node in unique_exit_nodes:
                 exit_times = timing_data.get(exit_node.id, [])
                 if not exit_times:
@@ -261,7 +229,7 @@ class CorrelationAttackAnalyzer:
                 
                 exit_sessions = self._find_session_boundaries(exit_times)
                 
-                # Correlate each entry session with exit sessions
+                # Correlate each pair of sessions
                 for entry_start, entry_end in entry_sessions:
                     entry_session_times = [t for t in entry_times 
                                           if entry_start <= t <= entry_end]
@@ -270,11 +238,12 @@ class CorrelationAttackAnalyzer:
                         exit_session_times = [t for t in exit_times 
                                              if exit_start <= t <= exit_end]
                         
-                        # Calculate correlation
+                        # Calculate correlation score
                         score = self._calculate_correlation_score(
                             entry_session_times, exit_session_times
                         )
                         
+                        # Record flows that exceed the threshold
                         if score >= self.correlation_threshold:
                             correlated_flows.append({
                                 'entry_node': entry_node.id,
@@ -291,7 +260,7 @@ class CorrelationAttackAnalyzer:
                                     len(entry_session_times), len(exit_session_times))
                             })
         
-        # Deduplication
+        # Remove duplicate flows (keep highest scoring)
         unique_flows = {}
         for flow in correlated_flows:
             key = (flow['entry_node'], flow['exit_node'], 
@@ -308,12 +277,9 @@ class CorrelationAttackAnalyzer:
     
     def perform_cumulative_correlation_attack(self) -> List[Dict]:
         """
-        Execute correlation attack with cumulative scoring across all sessions
-        for the same circuit. This builds confidence over time as more traffic
-        is observed through the same entry-exit pair.
-        
-        Returns:
-            List of correlated flows with cumulative metrics
+        Execute advanced correlation attack with cumulative evidence gathering.
+        Aggregates data across multiple sessions to build confidence over time.
+        Provides bonus scoring for consistent correlations across sessions.
         """
         timing_data = self.collect_timing_data()
         
@@ -321,10 +287,10 @@ class CorrelationAttackAnalyzer:
         unique_entry_nodes = list({node.id: node for node in self.entry_nodes}.values())
         unique_exit_nodes = list({node.id: node for node in self.exit_nodes}.values())
         
-        # Store all session data per circuit
+        # Aggregate session data per circuit
         circuit_sessions = {}
         
-        # Analyze each entry-exit pair
+        # Analyze all entry-exit pairs
         for entry_node in unique_entry_nodes:
             entry_times = timing_data.get(entry_node.id, [])
             if not entry_times:
@@ -353,7 +319,7 @@ class CorrelationAttackAnalyzer:
                             entry_session_times, exit_session_times
                         )
                         
-                        # Collect ALL sessions above minimum threshold
+                        # Store all sessions above minimum threshold for cumulative analysis
                         if score > 0.5:
                             if circuit_key not in circuit_sessions:
                                 circuit_sessions[circuit_key] = {
@@ -380,7 +346,7 @@ class CorrelationAttackAnalyzer:
             if not sessions:
                 continue
             
-            # Combine all timing data across sessions
+            # Aggregate timing data across all sessions
             all_entry_times = []
             all_exit_times = []
             total_entry_events = 0
@@ -392,28 +358,29 @@ class CorrelationAttackAnalyzer:
                 total_entry_events += session['entry_events']
                 total_exit_events += session['exit_events']
             
-            # Calculate cumulative correlation score
+            # Compute cumulative correlation score
             cumulative_score = self._calculate_correlation_score(
                 all_entry_times, all_exit_times
             )
             
-            # Calculate session consistency bonus
+            # Calculate consistency metrics
             session_scores = [s['individual_score'] for s in sessions]
             avg_session_score = statistics.mean(session_scores)
             score_consistency = 1.0 - statistics.stdev(session_scores) if len(session_scores) > 1 else 1.0
             
-            # Bonus for multiple consistent sessions
+            # Apply bonuses for multiple consistent sessions
             session_bonus = min(0.1 * (len(sessions) - 1), 0.3)  # Up to 30% bonus
             consistency_bonus = 0.05 * score_consistency  # Up to 5% bonus
             
-            # Final cumulative score
+            # Compute final weighted score
             final_score = min(cumulative_score + session_bonus + consistency_bonus, 1.0)
             
-            # Calculate cumulative confidence
+            # Determine cumulative confidence level
             cumulative_confidence = self._calculate_cumulative_confidence(
                 final_score, total_entry_events, total_exit_events, len(sessions)
             )
             
+            # Only report flows above the threshold
             if final_score >= self.correlation_threshold:
                 entry_node = circuit_data['entry_node']
                 exit_node = circuit_data['exit_node']
@@ -444,7 +411,7 @@ class CorrelationAttackAnalyzer:
                     'score_consistency': score_consistency
                 })
         
-        # Sort by final score
+        # Sort by final score (highest confidence first)
         correlated_flows.sort(key=lambda x: x['correlation_score'], reverse=True)
         
         return correlated_flows
@@ -452,12 +419,12 @@ class CorrelationAttackAnalyzer:
     def _calculate_cumulative_confidence(self, score: float, entry_events: int, 
                                         exit_events: int, num_sessions: int) -> str:
         """
-        Calculate confidence level based on cumulative evidence.
-        More sessions and events increase confidence.
+        Calculate confidence level with cumulative evidence weighting.
+        More sessions and events increase confidence in the correlation.
         """
         min_events = min(entry_events, exit_events)
         
-        # Adjusted thresholds considering cumulative data
+        # Adjusted thresholds for cumulative analysis
         if score >= 0.85 and min_events >= 20 and num_sessions >= 2:
             return "HIGH"
         elif score >= 0.80 and min_events >= 15:
@@ -471,8 +438,8 @@ class CorrelationAttackAnalyzer:
     
     def print_correlation_update(self) -> str:
         """
-        Generate a compact correlation update table showing current attack status.
-        Called after each send command to show progress.
+        Generate a compact status table showing current attack progress.
+        Called after each send command to display real-time correlation results.
         """
         correlated_flows = self.perform_cumulative_correlation_attack()
         
@@ -486,7 +453,7 @@ class CorrelationAttackAnalyzer:
             report.append("=" * 80)
             return "\n".join(report)
         
-        # Summary stats
+        # Summary statistics
         high_conf = [f for f in correlated_flows if f['confidence'] == 'HIGH']
         med_conf = [f for f in correlated_flows if f['confidence'] == 'MEDIUM']
         low_conf = [f for f in correlated_flows if f['confidence'] == 'LOW']
@@ -494,9 +461,9 @@ class CorrelationAttackAnalyzer:
         report.append(f"\n📈 Total Circuits Detected: {len(correlated_flows)} "
                     f"(🟢 {len(high_conf)} HIGH, 🟡 {len(med_conf)} MEDIUM, 🔴 {len(low_conf)} LOW)")
         
-        # Table header (renamed “Sessions” → “Messages”)
+        # Table header
         report.append("\n┌────────────────────────────────────┬──────────────┬──────────┬──────────┐")
-        report.append("│ Circuit                            │ Confidence   │ Score    │ Messages │")
+        report.append("│ Circuit                            │ Confidence   │ Score    │ Logs     │")
         report.append("├────────────────────────────────────┼──────────────┼──────────┼──────────┤")
         
         # Table rows
@@ -505,9 +472,8 @@ class CorrelationAttackAnalyzer:
             score = flow['correlation_score']
             confidence = flow['confidence']
             
-            # Use total number of messages (sum of entry + exit events)
-            total_messages = (flow['entry_events'] + flow['exit_events'])
-            total_messages=total_messages/6
+            # Calculate total messages (normalized)
+            total_messages = (flow['entry_events'] + flow['exit_events']) / 6
             
             # Confidence indicator
             if confidence == 'HIGH':
@@ -517,7 +483,7 @@ class CorrelationAttackAnalyzer:
             else:
                 conf_indicator = '🔴 LOW '
             
-            report.append(f"│ {circuit:<34} │ {conf_indicator:^11} │ {score:>7.1%}  │ {total_messages:^8} │")
+            report.append(f"│ {circuit:<34} │ {conf_indicator:^11} │ {score:>7.1%}  │ {total_messages:^8.0f} │")
         
         report.append("└────────────────────────────────────┴──────────────┴──────────┴──────────┘")
         
@@ -532,17 +498,13 @@ class CorrelationAttackAnalyzer:
         report.append("=" * 80)
 
         return "\n".join(report)
-
     
     def get_deanonymized_circuits(self) -> List[Dict]:
         """
-        Return only high-confidence deanonymized circuits.
+        Return only successfully deanonymized circuits (high confidence).
         
         Returns:
-            List of circuits that have been successfully deanonymized
+            List of circuits with HIGH confidence correlations
         """
         all_flows = self.perform_cumulative_correlation_attack()
         return [flow for flow in all_flows if flow['confidence'] == 'HIGH']
-    
-
-        

@@ -3,9 +3,9 @@ import socket
 import logging
 from typing import Optional, Dict
 from Utils.Cryptograpy_utils import *
-import json
 from TorNetwork.TorMessage import *
 
+# Simple key-value store for demo purposes
 RECORDS = {
     "alpha": "Record A",
     "beta": "Record B",
@@ -19,11 +19,14 @@ logging.basicConfig(
 )
 
 class Server:
+    """
+    Represents a destination server in the Tor network simulation.
+    Can operate in normal mode (returns requested records) or compromised mode (returns fake data).
+    """
+    
     def __init__(self, server_id: str, ip: str, port: int, oracle, compromised: bool):
         self.id = server_id
         self.ip = ip
-
-        # Socket and threading
         self.bind_ip = "127.0.0.1"
         self.port = port
         self.compromised = compromised
@@ -33,9 +36,7 @@ class Server:
         self.connections: Dict[str, socket.socket] = {}
         
         self.logger = logging.getLogger(f"Server-{self.id}")
-
         oracle.add_symb_ip(self.ip, self.port)
-
 
     def start(self):
         """Start the server and begin listening for connections."""
@@ -63,10 +64,11 @@ class Server:
             self.stop()
 
     def stop(self):
-        """Stop the server."""
+        """Stop the server and clean up all connections."""
         self.logger.info("Stopping server...")
         self.running = False
         
+        # Close all client connections
         for conn in self.connections.values():
             try:
                 conn.shutdown(socket.SHUT_RDWR)
@@ -75,6 +77,7 @@ class Server:
                 pass
         self.connections.clear()
         
+        # Close server socket
         if self.server_socket:
             try:
                 self.server_socket.shutdown(socket.SHUT_RDWR)
@@ -84,6 +87,7 @@ class Server:
             finally:
                 self.server_socket = None
 
+        # Wait for server thread to terminate
         if hasattr(self, 'server_thread') and self.server_thread.is_alive():
             self.logger.debug("Waiting for server thread to terminate...")
             self.server_thread.join(timeout=2.0)
@@ -93,7 +97,7 @@ class Server:
         self.logger.info("Server stopped successfully.")
     
     def _server_loop(self):
-        """Main server loop — accepts incoming connections."""
+        """Main server loop that accepts incoming connections."""
         while self.running:
             try:
                 self.server_socket.settimeout(1.0)
@@ -101,6 +105,7 @@ class Server:
                 client_id = f"{addr[0]}:{addr[1]}"
                 self.logger.info(f"Accepted connection from {client_id}")
                 
+                # Spawn a new thread for each client
                 client_thread = threading.Thread(
                     target=self._handle_client, 
                     args=(client_socket, addr),
@@ -115,7 +120,10 @@ class Server:
                     self.logger.error(f"Error in server loop: {e}", exc_info=True)
 
     def _handle_client(self, client_socket: socket.socket, addr):
-        """Handle an individual client connection."""
+        """
+        Handle an individual client connection.
+        Routes to normal or malicious message processor based on compromised status.
+        """
         client_id = f"{addr[0]}:{addr[1]}"
         self.logger.debug(f"Started client handler for {client_id}")
         
@@ -126,6 +134,7 @@ class Server:
                     self.logger.info(f"Client {client_id} disconnected.")
                     break
                 
+                # Choose processor based on compromised status
                 if not self.compromised:
                     self.logger.debug(f"Received {len(data)} bytes from {client_id} (normal server).")
                     response = self._process_message(data)
@@ -148,12 +157,15 @@ class Server:
             self.logger.debug(f"Connection closed for {client_id}")
 
     def _process_message(self, data):
-        """Process message for normal server."""
+        """
+        Process message for normal server operation.
+        Decodes the requested key and returns the corresponding record from RECORDS.
+        """
         try:
-         
             requested_key = decode_payload(data, 1)[0].decode('utf-8')
             self.logger.info(f"Received key request: '{requested_key}'")
 
+            # Look up the record in our database
             record = RECORDS.get(requested_key)
             if record:
                 self.logger.info(f"Found record for '{requested_key}': {record}")
@@ -170,8 +182,12 @@ class Server:
             return data_to_bytes("Internal server error")
 
     def _process_message_attacker(self, data):
-        """Process message for compromised server."""
+        """
+        Process message for compromised server operation.
+        Always returns fake/malicious data regardless of the request.
+        """
         try:
+            # Try to decode the key for logging purposes
             requested_key = "<undecodable>"
             try:
                 requested_key = decode_payload(data, 1)[0].decode('utf-8')
@@ -179,6 +195,8 @@ class Server:
                 pass
 
             self.logger.info(f"[MALICIOUS] Received key: '{requested_key}'. Sending fake data.")
+            
+            # Return malicious response
             malicious_response = "Bad code"
             encoded = data_to_bytes(malicious_response)
             self.logger.debug(f"[MALICIOUS] Encoded payload size: {len(encoded)} bytes.")
