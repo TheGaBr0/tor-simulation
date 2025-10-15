@@ -226,13 +226,3 @@ class TerminalWidget(QWidget):
 
         else:
             self.append_log(f"Unknown command: {command}")
-
-    def closeEvent(self, event):
-        """
-        Cleanup when the terminal window is closed.
-        Removes the logging handler to prevent memory leaks.
-        """
-        for handler in self.client.logger.handlers[:]:
-            if isinstance(handler, TerminalHandler):
-                self.client.logger.removeHandler(handler)
-        event.accept()

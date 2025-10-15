@@ -142,4 +142,4 @@ class DirectoryServer:
         if compromised:
             return random.randint(80, 100)
         else:
-            return random.randint(30, 100)
+            return random.randint(10, 100)

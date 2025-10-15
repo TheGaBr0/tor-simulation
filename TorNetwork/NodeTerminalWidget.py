@@ -179,16 +179,6 @@ class NodeTerminal(QWidget):
         else:
             self.append_log(f"Unknown command: {command}")
 
-    def closeEvent(self, event):
-        """
-        Cleanup when terminal window is closed.
-        Removes logging handler to prevent memory leaks.
-        """
-        for handler in self.logger.handlers[:]:
-            if isinstance(handler, NodeTerminalHandler):
-                self.logger.removeHandler(handler)
-        event.accept()
-
 
 class NodeTerminalHandler(logging.Handler):
     """

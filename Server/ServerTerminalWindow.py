@@ -74,16 +74,6 @@ class ServerTerminal(QWidget):
         cursor.movePosition(QTextCursor.MoveOperation.End)
         self.output.setTextCursor(cursor)
 
-    def closeEvent(self, event):
-        """
-        Cleanup when terminal window is closed.
-        Removes logging handler to prevent memory leaks.
-        """
-        for handler in self.logger.handlers[:]:
-            if isinstance(handler, ServerTerminalHandler):
-                self.logger.removeHandler(handler)
-        event.accept()
-
 
 class ServerTerminalHandler(logging.Handler):
     """
